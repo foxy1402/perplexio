@@ -1,0 +1,20 @@
+[
+  {
+    "id": "who-founded-openai",
+    "query": "Who founded OpenAI?",
+    "must_include_any": ["sam altman", "elon musk", "ilya sutskever", "greg brockman"],
+    "min_citations": 2
+  },
+  {
+    "id": "capital-france",
+    "query": "What is the capital of France?",
+    "must_include_any": ["paris"],
+    "min_citations": 1
+  },
+  {
+    "id": "python-creator",
+    "query": "Who created Python programming language?",
+    "must_include_any": ["guido van rossum", "guido"],
+    "min_citations": 1
+  }
+]
