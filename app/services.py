@@ -82,6 +82,23 @@ _CROSS_ENCODER_MODEL_NAME = ""
 RRF_K = 60
 
 
+def _normalize_tesseract_language(lang: str) -> str | None:
+    raw = (lang or "").strip()
+    if not raw or raw.lower() == "auto":
+        return None
+    # Accept "eng+ind", "eng,ind", or "eng ind" and normalize to Tesseract format.
+    parts = re.split(r"[,\s\+]+", raw)
+    cleaned = [p.strip() for p in parts if p.strip()]
+    return "+".join(cleaned) if cleaned else None
+
+
+def _normalize_transcription_language(lang: str) -> str | None:
+    raw = (lang or "").strip()
+    if not raw or raw.lower() == "auto":
+        return None
+    return raw
+
+
 async def search_web(query: str, top_k: int, search_mode: str = "all") -> list[dict[str, Any]]:
     search_url = f"{SEARXNG_BASE_URL.rstrip('/')}/search"
     mode = (search_mode or SEARCH_DEFAULT_MODE or "all").strip().lower()
@@ -946,8 +963,9 @@ async def transcribe_image_with_vision(file_path: str, mime_type: str) -> str:
     if shutil.which("tesseract") is None:
         return ""
     cmd = ["tesseract", str(p), "stdout"]
-    if OCR_LANGUAGE and OCR_LANGUAGE.lower() != "auto":
-        cmd.extend(["-l", OCR_LANGUAGE])
+    ocr_lang = _normalize_tesseract_language(OCR_LANGUAGE)
+    if ocr_lang:
+        cmd.extend(["-l", ocr_lang])
     completed = subprocess.run(cmd, capture_output=True, text=True)
     if completed.returncode != 0:
         return ""
@@ -965,6 +983,7 @@ async def transcribe_audio_file(file_path: str) -> str:
     if not p.exists():
         return ""
     engine = TRANSCRIPTION_ENGINE.lower().strip() or "auto"
+    tx_lang = _normalize_transcription_language(TRANSCRIPTION_LANGUAGE)
 
     def run_faster_whisper() -> str:
         global _FW_MODEL, _FW_MODEL_NAME
@@ -980,7 +999,7 @@ async def transcribe_audio_file(file_path: str) -> str:
                     compute_type="int8",
                 )
                 _FW_MODEL_NAME = TRANSCRIPTION_MODEL
-            language = TRANSCRIPTION_LANGUAGE or None
+            language = tx_lang
             segments, _info = _FW_MODEL.transcribe(
                 str(p),
                 language=language,
@@ -1007,8 +1026,8 @@ async def transcribe_audio_file(file_path: str) -> str:
                 "--fp16",
                 "False",
             ]
-            if TRANSCRIPTION_LANGUAGE and TRANSCRIPTION_LANGUAGE.lower() != "auto":
-                cmd.extend(["--language", TRANSCRIPTION_LANGUAGE])
+            if tx_lang:
+                cmd.extend(["--language", tx_lang])
             completed = subprocess.run(cmd, capture_output=True, text=True)
             if completed.returncode != 0:
                 return ""
@@ -1036,8 +1055,8 @@ async def transcribe_audio_file(file_path: str) -> str:
                 "-of",
                 out_base,
             ]
-            if TRANSCRIPTION_LANGUAGE and TRANSCRIPTION_LANGUAGE.lower() != "auto":
-                cmd.extend(["-l", TRANSCRIPTION_LANGUAGE])
+            if tx_lang:
+                cmd.extend(["-l", tx_lang])
             completed = subprocess.run(cmd, capture_output=True, text=True)
             if completed.returncode != 0:
                 return ""

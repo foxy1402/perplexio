@@ -17,6 +17,19 @@ docker compose up --build
 
 Open: `http://localhost:8000`
 
+## 1.5 Public Access Port
+
+For public access, expose:
+- `TCP 8000` to the app container (`perplexio`)
+
+Do not expose:
+- `UDP` (not used)
+- `searxng` public port unless you explicitly want public search API access
+
+Recommended production setup:
+- Expose `HTTPS 443` at your ingress/reverse proxy
+- Proxy to internal app `TCP 8000`
+
 ## 2. Minimal Env Vars (Recommended)
 
 You only need a small set of env vars to run the app.
@@ -220,6 +233,10 @@ Text extraction into LLM context currently supports:
 - Video files (`video/*`): audio extracted with `ffmpeg`, then locally transcribed.
 - Reindex endpoint can backfill text+embeddings for already uploaded files.
 - Structured text extraction includes better handling for JSON/CSV/Markdown inputs.
+
+Language configuration:
+- OCR: `OCR_LANGUAGE=auto` (default behavior), single language (`eng`), or multi-language (`eng+ind` or `eng,ind`).
+- Transcription: `TRANSCRIPTION_LANGUAGE=auto` for auto-detection, or set a specific language code (`en`, `id`, etc.).
 
 ## 7.5 Async Processing
 
