@@ -636,7 +636,7 @@ INDEX_HTML = """
 
     function setAnswerContent(answerEl, text, citations) {
       answerEl.innerHTML = "";
-      const lines = String(text || "").split("\n");
+      const lines = String(text || "").split("\\n");
       lines.forEach((line, idx) => {
         const row = document.createElement("div");
         let last = 0;
@@ -853,7 +853,7 @@ INDEX_HTML = """
     }
 
     function parseSseBlock(block) {
-      const lines = block.split("\n");
+      const lines = block.split("\\n");
       let event = "message";
       let data = "";
       for (const line of lines) {
@@ -910,7 +910,7 @@ INDEX_HTML = """
           const chunk = await reader.read();
           done = chunk.done;
           buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !done });
-          const blocks = buffer.split("\n\n");
+          const blocks = buffer.split("\\n\\n");
           buffer = blocks.pop() || "";
 
           blocks.forEach(block => {
@@ -980,6 +980,14 @@ INDEX_HTML = """
         jobsPollTimer = setInterval(() => { loadJobs(); }, 5000);
       }
     }
+
+    const queryInput = document.getElementById("q");
+    queryInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        ask();
+      }
+    });
 
     ensureAuth().then((info) => {
       if (!info.auth_enabled || info.authenticated) {
