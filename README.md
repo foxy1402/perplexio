@@ -1,9 +1,9 @@
-# Perplexio (Bundled SearxNG + OpenAI-compatible)
+# Perplexio (SearxNG + OpenAI-compatible)
 
 ![Perplexio Banner](media/perplexio_banner.png)
 
 A minimal Perplexity-like backend you can run for free with:
-- **built-in SearxNG** search engine (bundled in the same container, zero setup)
+- your own SearxNG instance for web search (self-hosted, no rate limits)
 - any OpenAI-compatible LLM endpoint (`OPENAI_BASE_URL`)
 - full runtime config via environment variables
 - persistent storage under `/data` for uploads + chat history
@@ -39,16 +39,27 @@ OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=your-api-key
 
+# Required for web search (your own SearxNG instance)
+SEARXNG_BASE_URL=http://your-searxng-instance:8080
+
 # Optional but recommended for personal deployment
 AUTH_PASSWORD=change_me
 DATA_DIR=/data
 ```
 
-> **Note:** SearxNG is bundled inside the container and runs automatically on `http://127.0.0.1:8080`. No `SEARXNG_BASE_URL` env var is needed unless you want to override it.
+### SearxNG Setup
 
-### Using a Public SearxNG Instance (Optional)
+Deploy your own SearxNG instance for unlimited, rate-limit-free search:
 
-If you prefer to use an external SearxNG instance instead of the bundled one, set `SEARXNG_BASE_URL`:
+```bash
+docker run -d -p 8080:8080 searxng/searxng:latest
+```
+
+Then set `SEARXNG_BASE_URL` to your instance URL.
+
+### Public SearxNG Instances (Fallback)
+
+> **Warning:** Public instances rate-limit API requests. Self-hosted is recommended.
 
 | Instance | URL |
 |----------|-----|
@@ -56,8 +67,6 @@ If you prefer to use an external SearxNG instance instead of the bundled one, se
 | Searx.be | `https://searx.be` |
 | Ononoki | `https://search.ononoki.org` |
 | Tiekoetter | `https://searx.tiekoetter.com` |
-
-> **Warning:** Public instances may rate-limit your requests. The bundled instance is recommended.
 
 Notes:
 - Embeddings default to the same endpoint as `OPENAI_BASE_URL`.
