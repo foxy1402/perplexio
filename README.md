@@ -1,9 +1,9 @@
-# Perplexio (Searxng + OpenAI-compatible)
+# Perplexio (Public SearxNG + OpenAI-compatible)
 
 ![Perplexio Banner](media/perplexio_banner.png)
 
 A minimal Perplexity-like backend you can run for free with:
-- `searxng` as the search engine
+- public SearxNG instance for web search (no self-hosting required)
 - any OpenAI-compatible LLM endpoint (`OPENAI_BASE_URL`)
 - full runtime config via environment variables
 - persistent storage under `/data` for uploads + chat history
@@ -24,7 +24,6 @@ For public access, expose:
 
 Do not expose:
 - `UDP` (not used)
-- `searxng` public port unless you explicitly want public search API access
 
 Recommended production setup:
 - Expose `HTTPS 443` at your ingress/reverse proxy
@@ -36,17 +35,32 @@ You only need a small set of env vars to run the app.
 
 ```env
 # Required for LLM
-OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
 OPENAI_MODEL=gpt-4o-mini
-OPENAI_API_KEY=
+OPENAI_API_KEY=your-api-key
+
+# Required for web search (pick any public SearxNG instance)
+SEARXNG_BASE_URL=https://search.sapti.me
 
 # Optional but recommended for personal deployment
 AUTH_PASSWORD=change_me
 DATA_DIR=/data
 ```
 
+### Public SearxNG Instances
+
+Pick any available instance for `SEARXNG_BASE_URL`:
+
+| Instance | URL |
+|----------|-----|
+| Sapti.me | `https://search.sapti.me` |
+| Searx.be | `https://searx.be` |
+| Ononoki | `https://search.ononoki.org` |
+| Tiekoetter | `https://searx.tiekoetter.com` |
+
+> **Tip:** If one instance is slow or down, just switch to another.
+
 Notes:
-- `SEARXNG_BASE_URL` defaults to `http://searxng:8080` (works with included compose).
 - Embeddings default to the same endpoint as `OPENAI_BASE_URL`.
 - If your embeddings endpoint is different, set:
   - `EMBEDDING_BASE_URL`
