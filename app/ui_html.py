@@ -874,7 +874,7 @@ INDEX_HTML = """
     async function ask() {
       const q = document.getElementById("q").value.trim();
       if (!q) return;
-      setStatus("Streaming answer...");
+      setStatus("Generating answer...");
       const includeFiles = document.getElementById("includeFiles").checked;
       const fileIds = sortedSelectedFileIds();
       const searchMode = document.getElementById("searchMode").value || "all";
@@ -883,11 +883,8 @@ INDEX_HTML = """
         clearThreadEmpty();
       }
       const rendered = renderMessage(q, "", [], "thinking...");
-      let citations = [];
-      let accumulated = "";
-
       try {
-        const res = await apiFetch("/api/ask/stream", {
+        const res = await apiFetch("/api/ask", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
@@ -899,44 +896,16 @@ INDEX_HTML = """
           })
         });
         if (!res.ok) throw new Error(await res.text());
-        if (!res.body) throw new Error("Missing response stream.");
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let done = false;
-
-        while (!done) {
-          const chunk = await reader.read();
-          done = chunk.done;
-          buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !done });
-          const blocks = buffer.split("\\n\\n");
-          buffer = blocks.pop() || "";
-
-          blocks.forEach(block => {
-            const msg = parseSseBlock(block);
-            if (!msg) return;
-            if (msg.event === "meta") {
-              citations = msg.payload.citations || [];
-            } else if (msg.event === "token") {
-              accumulated += msg.payload.delta || "";
-              setAnswerContent(rendered.answerEl, accumulated, citations);
-            } else if (msg.event === "done") {
-              activeThreadId = msg.payload.thread_id;
-              activeChatId = msg.payload.chat_id;
-              appendSources(rendered.msg, citations);
-              setFileSelectionStatus(`${selectedFileIds.size} file(s) attached to thread #${activeThreadId}`);
-              setStatus(`Saved to thread #${msg.payload.thread_id} (chat #${msg.payload.chat_id})`);
-              loadFollowups(activeChatId);
-            } else if (msg.event === "final") {
-              if (msg.payload && typeof msg.payload.answer === "string") {
-                setAnswerContent(rendered.answerEl, msg.payload.answer, citations);
-              }
-            } else if (msg.event === "error") {
-              throw new Error(msg.payload.detail || "stream error");
-            }
-          });
-        }
+        const payload = await res.json();
+        const answer = String(payload.answer || "");
+        const citations = payload.citations || [];
+        setAnswerContent(rendered.answerEl, answer, citations);
+        appendSources(rendered.msg, citations);
+        activeThreadId = payload.thread_id;
+        activeChatId = payload.chat_id;
+        setFileSelectionStatus(`${selectedFileIds.size} file(s) attached to thread #${activeThreadId}`);
+        setStatus(`Saved to thread #${payload.thread_id} (chat #${payload.chat_id})`);
+        loadFollowups(activeChatId);
         document.getElementById("q").value = "";
         await loadChats();
       } catch (err) {
