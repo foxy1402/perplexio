@@ -43,69 +43,103 @@ INDEX_HTML = """
       min-height: 100vh;
     }
     .sidebar {
-      border-right: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(23,31,45,0.92), rgba(12,16,24,0.94));
-      padding: 18px 14px;
+      border-right: 1px solid #1c212b;
+      background: #0e1116;
+      padding: 24px 16px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 24px;
     }
     .brand {
-      font-size: 20px;
-      font-weight: 700;
-      letter-spacing: 0.3px;
-      margin: 0;
+      font-size: 22px;
+      font-weight: 500;
+      letter-spacing: -0.5px;
+      margin: 0 0 4px 0;
+      color: #e5e7eb;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
     .hint {
       margin: 0;
-      color: var(--muted);
+      color: #6b7280;
       font-size: 13px;
     }
     .panel {
-      background: rgba(11, 16, 25, 0.8);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 10px;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
     .panel h3 {
-      margin: 0 0 8px 0;
-      font-size: 13px;
-      color: var(--muted);
+      margin: 0;
+      font-size: 11px;
+      color: #737f94;
       font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.8px;
     }
+    .btn-new-chat {
+      background: #eaf0ff;
+      color: #000;
+      border: none;
+      border-radius: 20px;
+      padding: 10px 16px;
+      font-weight: 500;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: opacity 0.2s;
+      width: 100%;
+    }
+    .btn-new-chat:hover { opacity: 0.9; }
     .history, .filelist {
       list-style: none;
       margin: 0;
       padding: 0;
-      display: grid;
-      gap: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
       max-height: 280px;
-      overflow: auto;
+      overflow-y: auto;
+      overflow-x: hidden;
     }
+    .history::-webkit-scrollbar, .filelist::-webkit-scrollbar { width: 4px; }
+    .history::-webkit-scrollbar-thumb, .filelist::-webkit-scrollbar-thumb { background: #2a3342; border-radius: 4px; }
     .history button {
       width: 100%;
       text-align: left;
-      padding: 8px 10px;
-      background: var(--panel-2);
-      color: var(--ink);
-      border: 1px solid var(--line);
-      border-radius: 10px;
+      padding: 8px 12px;
+      background: transparent;
+      color: #d1d5db;
+      border: none;
+      border-radius: 8px;
       cursor: pointer;
       font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: background 0.2s, color 0.2s;
     }
-    .history button:hover { border-color: #32507f; }
+    .history button:hover { background: #1f242d; color: #fff; }
     .filelist li {
-      color: var(--muted);
-      font-size: 12px;
+      color: #d1d5db;
+      font-size: 13px;
       display: flex;
       align-items: center;
       gap: 8px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      padding: 6px 8px;
+      border-radius: 8px;
     }
+    .filelist li:hover { background: #1f242d; }
     .filelist label {
       display: flex;
       align-items: center;
@@ -207,9 +241,44 @@ INDEX_HTML = """
     }
     input[type="file"] {
       color: var(--muted);
-      font-size: 13px;
-      max-width: 330px;
+      font-size: 12px;
+      max-width: 180px;
     }
+    input[type="file"]::file-selector-button {
+      background: #1f242d;
+      color: #eaf0ff;
+      border: 1px solid #2a3342;
+      border-radius: 6px;
+      padding: 4px 8px;
+      margin-right: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.2s;
+    }
+    input[type="file"]::file-selector-button:hover { background: #2a3342; }
+    .sidebar button.secondary {
+      background: transparent;
+      color: #9ca3af;
+      border: none;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+    .sidebar button.secondary:hover { background: #1f242d; color: #eaf0ff; }
+    .sidebar button.primary-small {
+      background: #1f242d;
+      color: #eaf0ff;
+      border: 1px solid #2a3342;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .sidebar button.primary-small:hover { background: #2a3342; }
     button {
       border: 0;
       border-radius: 10px;
@@ -296,44 +365,51 @@ INDEX_HTML = """
   </div>
   <div class="layout">
     <aside class="sidebar">
-      <h1 class="brand">Perplexio</h1>
-      <p class="hint">Search + files + grounded answer</p>
+      <div>
+        <h1 class="brand">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; color: #16c79a;"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+          Perplexio
+        </h1>
+        <p class="hint">Search + Grounded QA</p>
+      </div>
+
+      <button class="btn-new-chat" onclick="newChat()">
+        New Thread
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      </button>
+
       <div class="panel">
-        <h3>Chats</h3>
-        <div class="row" style="margin-bottom:8px;">
-          <button class="secondary" onclick="newChat()">New Chat</button>
+        <h3>Library</h3>
+        <ul id="history" class="history"></ul>
+        <div class="row" style="margin-top:4px;">
           <button class="secondary" onclick="loadChats()">Refresh</button>
           <button class="secondary" onclick="exportThread()">Export</button>
           <button class="secondary" onclick="purgeAllData()">Delete All</button>
-          <button class="secondary" onclick="logout()">Logout</button>
         </div>
-        <ul id="history" class="history"></ul>
       </div>
+
       <div class="panel">
-        <h3>Files</h3>
-        <div class="row">
+        <h3>Knowledge</h3>
+        <div class="row" style="margin-bottom: 4px;">
           <input id="fileInput" type="file" />
-          <button onclick="upload()">Upload</button>
-          <button class="secondary" onclick="saveThreadFiles()">Save to Thread</button>
+          <button class="primary-small" onclick="upload()">Save</button>
+          <button class="secondary" onclick="saveThreadFiles()">Link</button>
         </div>
         <div id="uploadStatus"></div>
         <div id="fileSelectionStatus" class="hint"></div>
         <ul id="fileList" class="filelist"></ul>
       </div>
-      <div class="panel">
-        <h3>Jobs</h3>
-        <div class="row" style="margin-bottom:8px;">
-          <button class="secondary" onclick="loadJobs()">Refresh</button>
+
+      <div class="panel" style="margin-top: auto;">
+        <h3>System</h3>
+        <div class="row">
+          <button class="secondary" onclick="loadJobs()">Jobs</button>
+          <button class="secondary" onclick="loadBackups()">Backups</button>
+          <button class="secondary" onclick="createBackup()">Backup DB</button>
+          <button class="secondary" onclick="logout()">Logout</button>
         </div>
-        <ul id="jobList" class="filelist"></ul>
-      </div>
-      <div class="panel">
-        <h3>Backups</h3>
-        <div class="row" style="margin-bottom:8px;">
-          <button class="secondary" onclick="createBackup()">Create</button>
-          <button class="secondary" onclick="loadBackups()">Refresh</button>
-        </div>
-        <ul id="backupList" class="filelist"></ul>
+        <ul id="jobList" class="filelist" style="max-height: 80px;"></ul>
+        <ul id="backupList" class="filelist" style="max-height: 80px;"></ul>
       </div>
     </aside>
     <main class="main">
