@@ -1,10 +1,16 @@
 import json
 import html
 import hashlib
+import logging
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import (

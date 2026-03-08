@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import math
 import re
 import shutil
@@ -99,6 +100,9 @@ def _normalize_transcription_language(lang: str) -> str | None:
     return raw
 
 
+logger = logging.getLogger("perplexio")
+
+
 async def search_web(query: str, top_k: int, search_mode: str = "all") -> list[dict[str, Any]]:
     search_url = f"{SEARXNG_BASE_URL.rstrip('/')}/search"
     mode = (search_mode or SEARCH_DEFAULT_MODE or "all").strip().lower()
@@ -113,11 +117,18 @@ async def search_web(query: str, top_k: int, search_mode: str = "all") -> list[d
     elif mode == "social":
         params["categories"] = "social media"
     timeout = httpx.Timeout(SEARXNG_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(search_url, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
-    return payload.get("results", [])[:top_k]
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(search_url, params=params)
+            resp.raise_for_status()
+            payload = resp.json()
+        results = payload.get("results", [])[:top_k]
+        if not results:
+            logger.warning("SearxNG returned 0 results for query: %s", query)
+        return results
+    except Exception as exc:
+        logger.error("SearxNG request failed (%s): %s", search_url, exc)
+        raise
 
 
 def _normalize_url(url: str) -> str:
@@ -723,7 +734,13 @@ async def prepare_ask(
         context_parts.append("Uploaded files:\n" + file_context)
     context = "\n\n".join(context_parts)
     if not context:
-        raise HTTPException(status_code=404, detail="No search results found.")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"No search results found. SearxNG endpoint ({SEARXNG_BASE_URL}) may be unreachable "
+                "or returned empty results. Check SEARXNG_BASE_URL env var and container network."
+            ),
+        )
 
     history: list[dict[str, str]] = []
     if thread_id is not None:
