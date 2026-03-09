@@ -592,8 +592,10 @@
           <div style="flex:1;"></div>
           <label style="color:var(--muted);font-size:13px;display:flex;align-items:center;gap:4px;">
             <select id="searchMode" style="background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:13px;">
-              <option value="all" selected>all</option>
-              <option value="web">web</option>
+              <option value="auto" selected>auto</option>
+              <option value="all">web + files</option>
+              <option value="files">files only</option>
+              <option value="web">web only</option>
               <option value="social">social</option>
             </select>
           </label>
@@ -1124,7 +1126,7 @@
       setStatus("Generating answer...");
       const includeFiles = true;
       const fileIds = sortedSelectedFileIds();
-      const searchMode = document.getElementById("searchMode").value || "all";
+      const searchMode = document.getElementById("searchMode").value || "auto";
 
       if (activeThreadId === null) {
         clearThreadEmpty();
