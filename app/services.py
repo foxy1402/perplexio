@@ -54,6 +54,7 @@ from app.settings import (
     THREAD_SUMMARY_ENABLED,
     THREAD_SUMMARY_INTERVAL,
     THREAD_SUMMARY_MAX_TOKENS,
+    LLM_MAX_TOKENS,
     LLM_RETRY_MAX_ATTEMPTS,
     LLM_RETRY_BASE_DELAY,
     LLM_RETRY_BACKOFF_FACTOR,
@@ -222,6 +223,16 @@ def _normalize_transcription_language(lang: str) -> str | None:
 logger = logging.getLogger("perplexio")
 
 
+_searxng_client: httpx.AsyncClient | None = None
+
+
+def _get_searxng_client() -> httpx.AsyncClient:
+    global _searxng_client
+    if _searxng_client is None or _searxng_client.is_closed:
+        _searxng_client = httpx.AsyncClient(timeout=httpx.Timeout(SEARXNG_TIMEOUT_SECONDS))
+    return _searxng_client
+
+
 async def search_web(query: str, top_k: int, search_mode: str = "all") -> list[dict[str, Any]]:
     search_url = f"{SEARXNG_BASE_URL.rstrip('/')}/search"
     mode = (search_mode or SEARCH_DEFAULT_MODE or "all").strip().lower()
@@ -235,12 +246,11 @@ async def search_web(query: str, top_k: int, search_mode: str = "all") -> list[d
         params["categories"] = "general"
     elif mode == "social":
         params["categories"] = "social media"
-    timeout = httpx.Timeout(SEARXNG_TIMEOUT_SECONDS)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(search_url, params=params)
-            resp.raise_for_status()
-            payload = resp.json()
+        client = _get_searxng_client()
+        resp = await client.get(search_url, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
         results = payload.get("results", [])[:top_k]
         if not results:
             logger.warning("SearxNG returned 0 results for query: %s", query)
@@ -650,13 +660,21 @@ def build_context(search_results: list[dict[str, Any]]) -> tuple[str, list[Citat
     return "\n\n".join(chunks), citations
 
 
+_FILE_SYSTEM_PROMPT = (
+    "You are a document-grounded assistant. Use only the uploaded file content provided. "
+    "If information is missing from the files, say so clearly."
+)
+
+
 def build_llm_messages(
     query: str,
     context: str,
     thread_history: list[dict[str, str]],
     thread_summary: str | None = None,
+    files_only: bool = False,
 ) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    system = _FILE_SYSTEM_PROMPT if files_only else SYSTEM_PROMPT
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     if thread_summary:
         messages.append(
             {
@@ -667,9 +685,10 @@ def build_llm_messages(
     for turn in thread_history:
         messages.append({"role": "user", "content": turn["query"]})
         messages.append({"role": "assistant", "content": turn["answer"]})
+    source_label = "Uploaded file content" if files_only else "Context"
     user_message = (
-        "Use the context below to answer. If uncertain, say so.\n\n"
-        "Context:\n"
+        f"Use the {source_label.lower()} below to answer. If uncertain, say so.\n\n"
+        f"{source_label}:\n"
         f"{context}\n\n"
         "Question:\n"
         f"{query}\n\n"
@@ -748,7 +767,7 @@ async def compress_thread_summary(thread_id: int) -> None:
 async def ask_model(messages: list[dict[str, str]]) -> str:
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
     headers = _llm_headers()
-    body = {"model": OPENAI_MODEL, "messages": messages, "temperature": 0.2}
+    body = {"model": OPENAI_MODEL, "messages": messages, "temperature": 0.2, "max_tokens": LLM_MAX_TOKENS}
 
     client = _get_llm_client()
     resp = await _retry_post(client, endpoint, headers=headers, json=body)
@@ -827,28 +846,54 @@ async def ask_model_stream(messages: list[dict[str, str]]) -> AsyncIterator[str]
         "model": OPENAI_MODEL,
         "messages": messages,
         "temperature": 0.2,
+        "max_tokens": LLM_MAX_TOKENS,
         "stream": True,
     }
 
     client = _get_llm_client()
-    async with client.stream("POST", endpoint, headers=headers, json=body) as resp:
-        resp.raise_for_status()
-        async for line in resp.aiter_lines():
-            if not line or not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            try:
-                payload = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-            choices = payload.get("choices", [])
-            if not choices:
-                continue
-            token = choices[0].get("delta", {}).get("content")
-            if token:
-                yield str(token)
+    # Probe with a retryable non-streaming call first to handle 429/5xx before
+    # opening the SSE stream (streaming responses can't be retried mid-flight).
+    attempts = max(1, LLM_RETRY_MAX_ATTEMPTS)
+    delay = max(0.1, LLM_RETRY_BASE_DELAY)
+    for attempt in range(1, attempts + 1):
+        try:
+            async with client.stream("POST", endpoint, headers=headers, json=body) as resp:
+                if resp.status_code in _RETRYABLE_STATUS_CODES and attempt < attempts:
+                    logger.warning(
+                        "Retryable HTTP %d from stream endpoint (attempt %d/%d), retrying in %.1fs...",
+                        resp.status_code, attempt, attempts, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= max(1.0, LLM_RETRY_BACKOFF_FACTOR)
+                    continue
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        return
+                    try:
+                        payload = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = payload.get("choices", [])
+                    if not choices:
+                        continue
+                    token = choices[0].get("delta", {}).get("content")
+                    if token:
+                        yield str(token)
+                return
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
+            if attempt < attempts:
+                logger.warning(
+                    "Stream connection error (attempt %d/%d): %s, retrying in %.1fs...",
+                    attempt, attempts, exc, delay,
+                )
+                await asyncio.sleep(delay)
+                delay *= max(1.0, LLM_RETRY_BACKOFF_FACTOR)
+            else:
+                raise
 
 
 async def prepare_ask(
@@ -857,19 +902,36 @@ async def prepare_ask(
     include_files: bool,
     thread_id: int | None,
     file_ids: list[int] | None,
-    search_mode: str = "all",
+    search_mode: str = "auto",
 ) -> tuple[list[dict[str, str]], list[Citation]]:
-    search_results = await multi_search_fusion(query, top_k=top_k, search_mode=search_mode)
-    web_context, web_citations = build_context(search_results)
+    # Resolve effective file IDs once so retrieval doesn't repeat the DB lookup.
+    effective_file_ids: list[int] | None
+    if file_ids is not None:
+        effective_file_ids = normalize_file_ids(file_ids)
+    elif thread_id is not None:
+        effective_file_ids = get_thread_file_ids(thread_id)
+    else:
+        effective_file_ids = None
+
+    # "auto" triggers files-only mode when the caller explicitly passes file_ids in
+    # THIS request. Thread-attached files are included as supplementary context
+    # (via include_files) but do not suppress web search on their own — the user
+    # may still be asking general questions while files are attached to the thread.
+    # Note: use effective_file_ids (post-normalize) so that file_ids=[] is treated
+    # the same as file_ids=None — an empty list means no files were actually attached.
+    effective_mode = search_mode
+    if search_mode == "auto":
+        effective_mode = "files" if (file_ids is not None and bool(effective_file_ids)) else "all"
+
+    web_context = ""
+    web_citations: list[Citation] = []
+    if effective_mode != "files":
+        search_results = await multi_search_fusion(query, top_k=top_k, search_mode=effective_mode)
+        web_context, web_citations = build_context(search_results)
+
     file_context = ""
     file_citations: list[Citation] = []
-    if include_files:
-        if file_ids is not None:
-            effective_file_ids: list[int] | None = normalize_file_ids(file_ids)
-        elif thread_id is not None:
-            effective_file_ids = get_thread_file_ids(thread_id)
-        else:
-            effective_file_ids = None
+    if include_files or effective_mode == "files":
         file_context, file_citations = await retrieve_file_context(
             query=query, file_ids=effective_file_ids
         )
@@ -883,6 +945,14 @@ async def prepare_ask(
         context_parts.append("Uploaded files:\n" + file_context)
     context = "\n\n".join(context_parts)
     if not context:
+        if effective_mode == "files":
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No content found in the attached files. "
+                    "Ensure the files are fully indexed before asking questions about them."
+                ),
+            )
         raise HTTPException(
             status_code=502,
             detail=(
@@ -904,7 +974,11 @@ async def prepare_ask(
         else:
             history = get_thread_history(thread_id, THREAD_HISTORY_TURNS)
     messages = build_llm_messages(
-        query=query, context=context, thread_history=history, thread_summary=summary_text
+        query=query,
+        context=context,
+        thread_history=history,
+        thread_summary=summary_text,
+        files_only=(effective_mode == "files"),
     )
     return messages, web_citations + file_citations
 
@@ -1037,6 +1111,9 @@ def chunk_text(text: str, size: int, overlap: int) -> list[str]:
     return chunks
 
 
+_EMBED_BATCH_SIZE = 96
+
+
 async def embed_texts(texts: list[str], input_type: str = "query") -> list[list[float]]:
     """Embed texts via the OpenAI-compatible /embeddings endpoint.
 
@@ -1051,27 +1128,42 @@ async def embed_texts(texts: list[str], input_type: str = "query") -> list[list[
     headers = {"Content-Type": "application/json"}
     if EMBEDDING_API_KEY:
         headers["Authorization"] = f"Bearer {EMBEDDING_API_KEY}"
-    body: dict[str, Any] = {
-        "model": EMBEDDING_MODEL,
-        "input": texts,
-        "encoding_format": "float",
-        "input_type": input_type,
-        "truncate": "NONE",
-    }
+
+    all_vectors: list[list[float]] = []
     client = _get_embedding_client()
-    resp = await _retry_post(client, endpoint, headers=headers, json=body)
-    payload = resp.json()
-    data = payload.get("data", [])
-    vectors: list[list[float]] = []
-    for item in data:
-        emb = item.get("embedding", [])
-        vectors.append([float(x) for x in emb])
-    return vectors
+    for batch_start in range(0, len(texts), _EMBED_BATCH_SIZE):
+        batch = texts[batch_start : batch_start + _EMBED_BATCH_SIZE]
+        body: dict[str, Any] = {
+            "model": EMBEDDING_MODEL,
+            "input": batch,
+            "encoding_format": "float",
+            "input_type": input_type,
+            "truncate": "NONE",
+        }
+        resp = await _retry_post(client, endpoint, headers=headers, json=body)
+        payload = resp.json()
+        data = payload.get("data", [])
+        for item in data:
+            emb = item.get("embedding", [])
+            all_vectors.append([float(x) for x in emb])
+    return all_vectors
+
+
+try:
+    import numpy as _np
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     if not a or not b or len(a) != len(b):
         return -1.0
+    if _NUMPY_AVAILABLE:
+        av = _np.array(a, dtype=_np.float32)
+        bv = _np.array(b, dtype=_np.float32)
+        denom = float(_np.linalg.norm(av) * _np.linalg.norm(bv))
+        return float(_np.dot(av, bv) / denom) if denom > 0.0 else -1.0
     dot = 0.0
     norm_a = 0.0
     norm_b = 0.0

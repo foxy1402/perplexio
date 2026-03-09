@@ -91,6 +91,7 @@ from app.storage import (
 )
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _INDEX_HTML_PATH = _STATIC_DIR / "index.html"
+logger = logging.getLogger("perplexio")
 
 
 @asynccontextmanager
@@ -229,8 +230,8 @@ async def upload_file(
     else:
         try:
             await index_file_for_retrieval(int(payload["file_id"]))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Sync indexing failed for file %s: %s", payload["file_id"], exc)
     ASK_CACHE.clear()
     return UploadResponse(**payload)
 
@@ -464,7 +465,7 @@ async def export_thread(thread_id: int, format: str = "markdown"):
                 lines.append(f"{i}. [{title}]({url})")
             lines.append("")
     md = "\n".join(lines)
-    return HTMLResponse(content=f"<pre>{html.escape(md)}</pre>")
+    return Response(content=md, media_type="text/markdown; charset=utf-8")
 
 
 @app.post("/api/ask", response_model=AskResponse)
@@ -627,6 +628,7 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
 @app.post("/api/admin/reindex", response_model=ReindexResponse)
 async def admin_reindex(payload: ReindexRequest) -> ReindexResponse:
     summary = await admin_reindex_files(file_ids=payload.file_ids, limit=payload.limit)
+    ASK_CACHE.clear()
     return ReindexResponse(**summary)
 
 

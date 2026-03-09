@@ -53,7 +53,12 @@ def login_success_response(auth_enabled_flag: bool) -> JSONResponse:
 
 def logout_response() -> JSONResponse:
     resp = JSONResponse({"ok": True, "auth_enabled": auth_enabled()})
-    resp.delete_cookie(AUTH_COOKIE_NAME)
+    resp.delete_cookie(
+        key=AUTH_COOKIE_NAME,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="lax",
+    )
     return resp
 
 

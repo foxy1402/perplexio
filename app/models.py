@@ -7,7 +7,7 @@ class AskRequest(BaseModel):
     include_files: bool = True
     thread_id: int | None = Field(default=None, ge=1)
     file_ids: list[int] | None = None
-    search_mode: str = Field(default="all")
+    search_mode: str = Field(default="auto")
 
 
 class Citation(BaseModel):
