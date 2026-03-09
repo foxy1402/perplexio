@@ -58,6 +58,7 @@ from app.pwa_assets import manifest_json, service_worker_js
 from app.services import (
     admin_reindex_files,
     align_answer_citations,
+    compress_thread_summary,
     compute_answer_confidence,
     ask_model,
     ask_model_stream,
@@ -467,7 +468,7 @@ async def export_thread(thread_id: int, format: str = "markdown"):
 
 
 @app.post("/api/ask", response_model=AskResponse)
-async def ask(payload: AskRequest) -> AskResponse:
+async def ask(payload: AskRequest, background_tasks: BackgroundTasks) -> AskResponse:
     validated_file_ids: list[int] | None = None
     if payload.file_ids is not None:
         validated_file_ids = validate_file_ids(payload.file_ids)
@@ -508,6 +509,7 @@ async def ask(payload: AskRequest) -> AskResponse:
     if cache_key:
         async with _CACHE_LOCK:
             _cache_set(cache_key, out.model_dump())
+    background_tasks.add_task(compress_thread_summary, thread_id)
     return out
 
 
@@ -600,6 +602,8 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
             yield f"event: done\ndata: {json.dumps(done, ensure_ascii=True)}\n\n".encode(
                 "utf-8"
             )
+            # Trigger background summarization for the thread.
+            await compress_thread_summary(thread_id)
             if aligned_answer != answer:
                 final_payload = {"answer": aligned_answer}
                 yield (

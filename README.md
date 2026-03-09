@@ -80,12 +80,28 @@ Everything else can stay default and the app will still work.
 ## 2.5 Advanced Env Vars (Optional)
 
 See `.env.example` for full tuning options:
-- Search/retrieval: `SEARXNG_RESULT_COUNT`, `SEARCH_DEFAULT_MODE`, `SEARCH_MAX_HOPS`, `SEARCH_FOLLOWUP_QUERIES`
-- Rerank/citations: `RERANK_*`, `CITATION_ALIGN_MIN_SCORE`, `SOURCE_QUALITY_MIN`, `CONFIDENCE_ABSTAIN_THRESHOLD`
-- File retrieval: `FILE_*`, `MAX_FILE_CONTEXT_CHARS`
-- OCR/transcription: `OCR_*`, `TRANSCRIPTION_*`, `WHISPER_CPP_*`
-- Auth/session: `AUTH_COOKIE_NAME`, `AUTH_SESSION_MAX_AGE_SECONDS`, `AUTH_SESSION_SECRET`
-- Ops: `BACKUP_RETENTION_COUNT`, `ASK_CACHE_*`
+
+| Category | Variables |
+|----------|-----------|
+| **Search / retrieval** | `SEARXNG_RESULT_COUNT`, `SEARCH_DEFAULT_MODE`, `SEARCH_MAX_HOPS`, `SEARCH_FOLLOWUP_QUERIES` |
+| **Rerank / citations** | `RERANK_BLEND_ALPHA`, `RERANK_USE_CROSS_ENCODER`, `CROSS_ENCODER_MODEL`, `CITATION_ALIGN_MIN_SCORE`, `SOURCE_QUALITY_MIN`, `CONFIDENCE_ABSTAIN_THRESHOLD` |
+| **File retrieval** | `FILE_CHUNK_SIZE_CHARS`, `FILE_CHUNK_OVERLAP_CHARS`, `FILE_VECTOR_TOP_K`, `FILE_CONTEXT_FILE_COUNT`, `MAX_FILE_CONTEXT_CHARS` |
+| **Thread memory** | `THREAD_HISTORY_TURNS`, `THREAD_SUMMARY_ENABLED`, `THREAD_SUMMARY_INTERVAL`, `THREAD_RECENT_TURNS`, `THREAD_SUMMARY_MAX_TOKENS` |
+| **OCR / transcription** | `OCR_ENABLED`, `OCR_LANGUAGE`, `TRANSCRIPTION_ENABLED`, `TRANSCRIPTION_ENGINE`, `TRANSCRIPTION_MODEL`, `TRANSCRIPTION_LANGUAGE`, `WHISPER_CPP_BIN`, `WHISPER_CPP_MODEL` |
+| **Embeddings** | `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY`, `EMBEDDING_MODEL`, `EMBEDDING_TIMEOUT_SECONDS` |
+| **Auth / session** | `AUTH_COOKIE_NAME`, `AUTH_SESSION_MAX_AGE_SECONDS`, `AUTH_SESSION_SECRET`, `AUTH_COOKIE_SECURE` |
+| **Ops** | `BACKUP_RETENTION_COUNT`, `ASK_CACHE_TTL_SECONDS`, `ASK_CACHE_MAX_ITEMS` |
+
+### Thread Summary Compression
+
+Long conversations are automatically compressed to save tokens. Older turns get summarized by the LLM into a concise summary (~200-300 tokens), while the most recent turns are kept in full. This gives the LLM long-term memory without high token costs.
+
+```env
+THREAD_SUMMARY_ENABLED=1       # 1 = on (default), 0 = off
+THREAD_SUMMARY_INTERVAL=3      # Compress every 3 new turns
+THREAD_RECENT_TURNS=3           # Keep last 3 turns as raw Q&A
+THREAD_SUMMARY_MAX_TOKENS=300   # Max summary length
+```
 
 ## 3. API
 

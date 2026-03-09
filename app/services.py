@@ -50,6 +50,10 @@ from app.settings import (
     TRUST_PREFERRED_DOMAINS,
     SYSTEM_PROMPT,
     THREAD_HISTORY_TURNS,
+    THREAD_RECENT_TURNS,
+    THREAD_SUMMARY_ENABLED,
+    THREAD_SUMMARY_INTERVAL,
+    THREAD_SUMMARY_MAX_TOKENS,
     TRANSCRIPTION_ENABLED,
     TRANSCRIPTION_ENGINE,
     TRANSCRIPTION_LANGUAGE,
@@ -65,12 +69,16 @@ from app.storage import (
     get_file_record,
     get_thread_file_ids,
     get_thread_history,
+    get_thread_summary,
+    get_thread_turn_count,
+    get_thread_turns_after,
     get_job,
     list_file_chunks,
     list_file_ids,
     list_jobs,
     normalize_file_ids,
     replace_file_chunks,
+    save_thread_summary,
     update_job,
     update_file_extracted_text,
 )
@@ -581,9 +589,19 @@ def build_context(search_results: list[dict[str, Any]]) -> tuple[str, list[Citat
 
 
 def build_llm_messages(
-    query: str, context: str, thread_history: list[dict[str, str]]
+    query: str,
+    context: str,
+    thread_history: list[dict[str, str]],
+    thread_summary: str | None = None,
 ) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if thread_summary:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"Summary of earlier conversation:\n{thread_summary}",
+            }
+        )
     for turn in thread_history:
         messages.append({"role": "user", "content": turn["query"]})
         messages.append({"role": "assistant", "content": turn["answer"]})
@@ -597,6 +615,73 @@ def build_llm_messages(
     )
     messages.append({"role": "user", "content": user_message})
     return messages
+
+
+async def compress_thread_summary(thread_id: int) -> None:
+    """Compress older turns in a thread into a rolling summary.
+
+    Called after a new turn is saved. Uses the LLM to summarize
+    all turns that aren't covered by THREAD_RECENT_TURNS.
+    """
+    if not THREAD_SUMMARY_ENABLED:
+        return
+    turn_count = get_thread_turn_count(thread_id)
+    if turn_count < THREAD_SUMMARY_INTERVAL + THREAD_RECENT_TURNS:
+        return  # Not enough turns to compress yet.
+    existing = get_thread_summary(thread_id)
+    last_summarized_id = existing["summarized_up_to_chat_id"] if existing else 0
+    # Get all turns since the last summary that are older than RECENT_TURNS.
+    all_turns = get_thread_turns_after(thread_id, last_summarized_id)
+    if len(all_turns) <= THREAD_RECENT_TURNS:
+        return  # Nothing new to compress.
+    # Turns to compress = all except the most recent N.
+    to_compress = all_turns[: -THREAD_RECENT_TURNS]
+    if not to_compress:
+        return
+    # Build the text to summarize.
+    existing_summary = existing["summary"] if existing else ""
+    parts: list[str] = []
+    if existing_summary:
+        parts.append(f"Previous summary:\n{existing_summary}")
+    parts.append("New conversation turns to incorporate:")
+    for t in to_compress:
+        parts.append(f"User: {t['query']}\nAssistant: {t['answer']}")
+    text_to_summarize = "\n\n".join(parts)
+    prompt = (
+        f"Compress the following conversation into a concise summary "
+        f"(max {THREAD_SUMMARY_MAX_TOKENS} tokens). "
+        f"Preserve all key facts, decisions, names, dates, and user preferences. "
+        f"Do NOT include greetings or filler. Return ONLY the summary text."
+    )
+    endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
+    headers = _llm_headers()
+    body = {
+        "model": OPENAI_MODEL,
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": text_to_summarize},
+        ],
+        "temperature": 0.1,
+        "max_tokens": THREAD_SUMMARY_MAX_TOKENS,
+    }
+    try:
+        client = _get_llm_client()
+        resp = await client.post(endpoint, headers=headers, json=body)
+        resp.raise_for_status()
+        payload = resp.json()
+        summary = str(
+            payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+        ).strip()
+        if summary:
+            new_up_to = int(to_compress[-1]["id"])
+            save_thread_summary(
+                thread_id=thread_id,
+                summary=summary,
+                summarized_up_to_chat_id=new_up_to,
+                turn_count=turn_count,
+            )
+    except Exception:
+        pass  # Summarization is best-effort; don't block the main flow.
 
 
 async def ask_model(messages: list[dict[str, str]]) -> str:
@@ -748,9 +833,20 @@ async def prepare_ask(
         )
 
     history: list[dict[str, str]] = []
+    summary_text: str | None = None
     if thread_id is not None:
-        history = get_thread_history(thread_id, THREAD_HISTORY_TURNS)
-    messages = build_llm_messages(query=query, context=context, thread_history=history)
+        if THREAD_SUMMARY_ENABLED:
+            existing = get_thread_summary(thread_id)
+            summary_text = existing["summary"] if existing else None
+            # Get only recent turns (post-summary)
+            last_id = existing["summarized_up_to_chat_id"] if existing else 0
+            recent = get_thread_turns_after(thread_id, last_id)
+            history = [{"query": t["query"], "answer": t["answer"]} for t in recent[-THREAD_RECENT_TURNS:]]
+        else:
+            history = get_thread_history(thread_id, THREAD_HISTORY_TURNS)
+    messages = build_llm_messages(
+        query=query, context=context, thread_history=history, thread_summary=summary_text
+    )
     return messages, web_citations + file_citations
 
 

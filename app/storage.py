@@ -20,6 +20,8 @@ from app.settings import (
     FILE_CONTEXT_FILE_COUNT,
     MAX_FILE_CONTEXT_CHARS,
     MAX_UPLOAD_SIZE_MB,
+    THREAD_SUMMARY_ENABLED,
+    THREAD_SUMMARY_INTERVAL,
     UPLOAD_DIR,
 )
 
@@ -127,6 +129,17 @@ def init_storage() -> None:
             "CREATE INDEX IF NOT EXISTS idx_file_chunks_file_id ON file_chunks(file_id)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS thread_summaries (
+                thread_id INTEGER PRIMARY KEY,
+                summary TEXT NOT NULL,
+                summarized_up_to_chat_id INTEGER NOT NULL DEFAULT 0,
+                turn_count INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
 
@@ -306,6 +319,66 @@ def get_thread_history(thread_id: int, turns: int) -> list[dict[str, str]]:
         ).fetchall()
     ordered = list(reversed(rows))
     return [{"query": str(r["query"]), "answer": str(r["answer"])} for r in ordered]
+
+
+def get_thread_summary(thread_id: int) -> dict | None:
+    """Return the compressed summary for a thread, or None."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT summary, summarized_up_to_chat_id, turn_count FROM thread_summaries WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "summary": str(row["summary"]),
+        "summarized_up_to_chat_id": int(row["summarized_up_to_chat_id"]),
+        "turn_count": int(row["turn_count"]),
+    }
+
+
+def save_thread_summary(
+    thread_id: int, summary: str, summarized_up_to_chat_id: int, turn_count: int
+) -> None:
+    """Upsert the compressed thread summary."""
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO thread_summaries (thread_id, summary, summarized_up_to_chat_id, turn_count, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                summary = excluded.summary,
+                summarized_up_to_chat_id = excluded.summarized_up_to_chat_id,
+                turn_count = excluded.turn_count,
+                updated_at = excluded.updated_at
+            """,
+            (thread_id, summary, summarized_up_to_chat_id, turn_count, utc_now_iso()),
+        )
+        conn.commit()
+
+
+def get_thread_turn_count(thread_id: int) -> int:
+    """Return total number of turns in a thread."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(1) AS c FROM chats WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    return int(row["c"]) if row else 0
+
+
+def get_thread_turns_after(thread_id: int, after_chat_id: int) -> list[dict[str, str]]:
+    """Return turns in a thread with id > after_chat_id, ordered ASC."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, query, answer FROM chats
+            WHERE thread_id = ? AND id > ?
+            ORDER BY id ASC
+            """,
+            (thread_id, after_chat_id),
+        ).fetchall()
+    return [{"id": int(r["id"]), "query": str(r["query"]), "answer": str(r["answer"])} for r in rows]
 
 
 def save_uploaded_file(filename: str, mime_type: str, content: bytes) -> dict:
@@ -494,6 +567,7 @@ def purge_all_data() -> dict:
             conn.execute("SELECT COUNT(1) AS c FROM file_chunks").fetchone()["c"]
         )
 
+        conn.execute("DELETE FROM thread_summaries")
         conn.execute("DELETE FROM thread_files")
         conn.execute("DELETE FROM chats")
         conn.execute("DELETE FROM file_chunks")
