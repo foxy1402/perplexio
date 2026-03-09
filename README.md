@@ -36,11 +36,16 @@ You only need a small set of env vars to run the app.
 ```env
 # Required for LLM
 OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=openai/gpt-oss-120b
 OPENAI_API_KEY=your-api-key
 
 # Required for web search (your own SearxNG instance)
 SEARXNG_BASE_URL=http://your-searxng-instance:8080
+
+# Recommended for file vector search (uses same API key)
+EMBEDDING_BASE_URL=https://integrate.api.nvidia.com/v1
+EMBEDDING_MODEL=nvidia/nv-embedcode-7b-v1
+EMBEDDING_API_KEY=your-api-key
 
 # Optional but recommended for personal deployment
 AUTH_PASSWORD=change_me
@@ -68,14 +73,14 @@ Then set `SEARXNG_BASE_URL` to your instance URL.
 | Ononoki | `https://search.ononoki.org` |
 | Tiekoetter | `https://searx.tiekoetter.com` |
 
-Notes:
-- Embeddings default to the same endpoint as `OPENAI_BASE_URL`.
-- If your embeddings endpoint is different, set:
-  - `EMBEDDING_BASE_URL`
-  - `EMBEDDING_MODEL`
-  - `EMBEDDING_API_KEY`
+### Embedding Setup
 
-Everything else can stay default and the app will still work.
+Embeddings power smart file search — uploaded files are chunked, vectorized, and searched by semantic similarity instead of keyword matching.
+
+- If `EMBEDDING_BASE_URL` is not set, it defaults to `OPENAI_BASE_URL`
+- If your LLM provider doesn't support `/embeddings` (e.g. NVIDIA chat-only models), set a separate embedding endpoint
+- Without embeddings, file upload still works — it just falls back to raw text inclusion
+- NVIDIA provides `nvidia/nv-embedcode-7b-v1` for free-tier API access
 
 ## 2.5 Advanced Env Vars (Optional)
 
@@ -90,6 +95,7 @@ See `.env.example` for full tuning options:
 | **OCR / transcription** | `OCR_ENABLED`, `OCR_LANGUAGE`, `TRANSCRIPTION_ENABLED`, `TRANSCRIPTION_ENGINE`, `TRANSCRIPTION_MODEL`, `TRANSCRIPTION_LANGUAGE`, `WHISPER_CPP_BIN`, `WHISPER_CPP_MODEL` |
 | **Embeddings** | `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY`, `EMBEDDING_MODEL`, `EMBEDDING_TIMEOUT_SECONDS` |
 | **Auth / session** | `AUTH_COOKIE_NAME`, `AUTH_SESSION_MAX_AGE_SECONDS`, `AUTH_SESSION_SECRET`, `AUTH_COOKIE_SECURE` |
+| **Retry** | `LLM_RETRY_MAX_ATTEMPTS`, `LLM_RETRY_BASE_DELAY`, `LLM_RETRY_BACKOFF_FACTOR` |
 | **Ops** | `BACKUP_RETENTION_COUNT`, `ASK_CACHE_TTL_SECONDS`, `ASK_CACHE_MAX_ITEMS` |
 
 ### Thread Summary Compression
@@ -101,6 +107,16 @@ THREAD_SUMMARY_ENABLED=1       # 1 = on (default), 0 = off
 THREAD_SUMMARY_INTERVAL=3      # Compress every 3 new turns
 THREAD_RECENT_TURNS=3           # Keep last 3 turns as raw Q&A
 THREAD_SUMMARY_MAX_TOKENS=300   # Max summary length
+```
+
+### API Retry
+
+All LLM and embedding API calls automatically retry on rate-limit (429) and server errors (500/502/503/504) with exponential backoff. This prevents intermittent failures from breaking your queries.
+
+```env
+LLM_RETRY_MAX_ATTEMPTS=3       # max retries (default: 3)
+LLM_RETRY_BASE_DELAY=2.0       # initial wait in seconds (default: 2)
+LLM_RETRY_BACKOFF_FACTOR=2.0   # multiplier per retry (2s → 4s → 8s)
 ```
 
 ## 3. API

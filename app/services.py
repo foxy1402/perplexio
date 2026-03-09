@@ -54,6 +54,9 @@ from app.settings import (
     THREAD_SUMMARY_ENABLED,
     THREAD_SUMMARY_INTERVAL,
     THREAD_SUMMARY_MAX_TOKENS,
+    LLM_RETRY_MAX_ATTEMPTS,
+    LLM_RETRY_BASE_DELAY,
+    LLM_RETRY_BACKOFF_FACTOR,
     TRANSCRIPTION_ENABLED,
     TRANSCRIPTION_ENGINE,
     TRANSCRIPTION_LANGUAGE,
@@ -114,6 +117,67 @@ def _llm_headers() -> dict[str, str]:
     if OPENAI_API_KEY:
         headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
     return headers
+
+
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+async def _retry_post(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    json: Any = None,
+    stream: bool = False,
+) -> httpx.Response:
+    """POST with exponential backoff retry for rate-limit / server errors."""
+    attempts = max(1, LLM_RETRY_MAX_ATTEMPTS)
+    delay = max(0.1, LLM_RETRY_BASE_DELAY)
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            if stream:
+                resp = await client.send(
+                    client.build_request("POST", url, headers=headers, json=json),
+                    stream=True,
+                )
+            else:
+                resp = await client.post(url, headers=headers, json=json)
+            if resp.status_code not in _RETRYABLE_STATUS_CODES or attempt == attempts:
+                resp.raise_for_status()
+                return resp
+            # Retryable status — wait and retry.
+            logger.warning(
+                "Retryable HTTP %d from %s (attempt %d/%d), retrying in %.1fs...",
+                resp.status_code, url, attempt, attempts, delay,
+            )
+            await asyncio.sleep(delay)
+            delay *= max(1.0, LLM_RETRY_BACKOFF_FACTOR)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in _RETRYABLE_STATUS_CODES and attempt < attempts:
+                logger.warning(
+                    "Retryable HTTP %d from %s (attempt %d/%d), retrying in %.1fs...",
+                    exc.response.status_code, url, attempt, attempts, delay,
+                )
+                await asyncio.sleep(delay)
+                delay *= max(1.0, LLM_RETRY_BACKOFF_FACTOR)
+                last_exc = exc
+            else:
+                raise
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
+            if attempt < attempts:
+                logger.warning(
+                    "Connection error to %s (attempt %d/%d): %s, retrying in %.1fs...",
+                    url, attempt, attempts, exc, delay,
+                )
+                await asyncio.sleep(delay)
+                delay *= max(1.0, LLM_RETRY_BACKOFF_FACTOR)
+                last_exc = exc
+            else:
+                raise
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Retry loop exited unexpectedly")
 
 
 def _parse_json_array(raw: str, fallback: list | None = None) -> list:
@@ -314,8 +378,7 @@ async def rewrite_queries(query: str) -> list[str]:
     }
     try:
         client = _get_llm_client()
-        resp = await client.post(endpoint, headers=headers, json=body)
-        resp.raise_for_status()
+        resp = await _retry_post(client, endpoint, headers=headers, json=body)
         payload = resp.json()
         raw = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
         data = _parse_json_array(raw, fallback=[query])
@@ -368,8 +431,7 @@ async def generate_followup_queries(
     }
     try:
         client = _get_llm_client()
-        resp = await client.post(endpoint, headers=headers, json=body)
-        resp.raise_for_status()
+        resp = await _retry_post(client, endpoint, headers=headers, json=body)
         payload = resp.json()
         raw = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
         data = _parse_json_array(raw)
@@ -666,8 +728,7 @@ async def compress_thread_summary(thread_id: int) -> None:
     }
     try:
         client = _get_llm_client()
-        resp = await client.post(endpoint, headers=headers, json=body)
-        resp.raise_for_status()
+        resp = await _retry_post(client, endpoint, headers=headers, json=body)
         payload = resp.json()
         summary = str(
             payload.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -690,8 +751,7 @@ async def ask_model(messages: list[dict[str, str]]) -> str:
     body = {"model": OPENAI_MODEL, "messages": messages, "temperature": 0.2}
 
     client = _get_llm_client()
-    resp = await client.post(endpoint, headers=headers, json=body)
-    resp.raise_for_status()
+    resp = await _retry_post(client, endpoint, headers=headers, json=body)
     payload = resp.json()
 
     choices = payload.get("choices", [])
@@ -738,8 +798,7 @@ async def suggest_followups(
     }
     try:
         client = _get_llm_client()
-        resp = await client.post(endpoint, headers=headers, json=body)
-        resp.raise_for_status()
+        resp = await _retry_post(client, endpoint, headers=headers, json=body)
         payload = resp.json()
         raw = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
         data = _parse_json_array(raw)
@@ -882,7 +941,7 @@ async def align_answer_citations(answer: str, citations: list[Citation]) -> str:
         cite_texts.append(f"[{i}] {c.title}\n{c.snippet}".strip()[:600])
 
     try:
-        vectors = await embed_texts(candidate_texts + cite_texts)
+        vectors = await embed_texts(candidate_texts + cite_texts, input_type="passage")
     except Exception:
         return text
     split = len(candidate_texts)
@@ -978,17 +1037,29 @@ def chunk_text(text: str, size: int, overlap: int) -> list[str]:
     return chunks
 
 
-async def embed_texts(texts: list[str]) -> list[list[float]]:
+async def embed_texts(texts: list[str], input_type: str = "query") -> list[list[float]]:
+    """Embed texts via the OpenAI-compatible /embeddings endpoint.
+
+    Args:
+        texts: List of strings to embed.
+        input_type: 'query' for search queries, 'passage' for document chunks.
+                    Required by NVIDIA embedding models; ignored by others.
+    """
     if not texts:
         return []
     endpoint = f"{EMBEDDING_BASE_URL.rstrip('/')}/embeddings"
     headers = {"Content-Type": "application/json"}
     if EMBEDDING_API_KEY:
         headers["Authorization"] = f"Bearer {EMBEDDING_API_KEY}"
-    body = {"model": EMBEDDING_MODEL, "input": texts}
+    body: dict[str, Any] = {
+        "model": EMBEDDING_MODEL,
+        "input": texts,
+        "encoding_format": "float",
+        "input_type": input_type,
+        "truncate": "NONE",
+    }
     client = _get_embedding_client()
-    resp = await client.post(endpoint, headers=headers, json=body)
-    resp.raise_for_status()
+    resp = await _retry_post(client, endpoint, headers=headers, json=body)
     payload = resp.json()
     data = payload.get("data", [])
     vectors: list[list[float]] = []
@@ -1022,7 +1093,7 @@ async def index_file_chunks(file_id: int) -> int:
     if not chunks:
         replace_file_chunks(file_id, [])
         return 0
-    vectors = await embed_texts(chunks)
+    vectors = await embed_texts(chunks, input_type="passage")
     if len(vectors) != len(chunks):
         raise RuntimeError("Embedding response size mismatch for file chunks.")
     payload = [{"content": c, "embedding": v} for c, v in zip(chunks, vectors)]
@@ -1036,7 +1107,7 @@ async def retrieve_file_context(
     rows = list_file_chunks(file_ids=file_ids, limit=FILE_VECTOR_CANDIDATE_LIMIT)
     if not rows:
         return "", []
-    q_vectors = await embed_texts([query])
+    q_vectors = await embed_texts([query], input_type="query")
     if not q_vectors:
         return "", []
     qv = q_vectors[0]
