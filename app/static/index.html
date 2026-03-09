@@ -179,6 +179,8 @@
       border: none;
       padding: 0;
       margin-bottom: 0;
+      min-width: 0;
+      width: 100%;
     }
     .meta {
       color: var(--muted);
@@ -227,25 +229,22 @@
     .sources {
       margin-top: 16px;
       display: flex;
-      gap: 12px;
-      overflow-x: auto;
-      padding-bottom: 8px;
+      flex-wrap: wrap;
+      gap: 10px;
+      width: 100%;
+      padding-bottom: 4px;
     }
-    .sources::-webkit-scrollbar { height: 4px; }
-    .sources::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
     .source-card {
-      flex: 0 0 200px;
+      flex: 1 1 160px;
+      max-width: 240px;
       border: 1px solid var(--line);
       background: var(--panel);
       border-radius: 8px;
-      padding: 12px;
-      transition: background 0.2s;
-    
-      padding: 6px 12px;
+      padding: 8px 12px;
       display: flex;
       flex-direction: column;
       gap: 2px;
-      min-width: 120px;
+      transition: background 0.2s;
     }
     .source-card:hover {
       background: var(--panel-2);
