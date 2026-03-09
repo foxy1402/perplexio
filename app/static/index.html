@@ -655,6 +655,19 @@
       el.className = isError ? "hint error" : "hint";
     }
 
+    function resetComposer() {
+      document.getElementById("q").value = "";
+      const q = document.getElementById("q");
+      q.style.height = "auto";
+      document.getElementById("searchMode").value = "auto";
+      document.getElementById("fileInput").value = "";
+      setUploadStatus("");
+      setStatus("");
+      const followups = document.getElementById("followups");
+      followups.innerHTML = "";
+      followups.style.display = "none";
+    }
+
     function setAuthStatus(text, isError=false) {
       const el = document.getElementById("authStatus");
       el.textContent = text || "";
@@ -733,6 +746,7 @@
         activeChatId = null;
         selectedFileIds.clear();
         allFiles = [];
+        resetComposer();
         clearThread();
         await loadChats();
         await loadFiles();
@@ -1096,9 +1110,9 @@
       selectedFileIds.clear();
       renderFiles();
       clearThread();
+      resetComposer();
       setFileSelectionStatus("No thread selected. File choices apply to the next ask.");
       setStatus("New chat ready");
-      document.getElementById("followups").innerHTML = "";
     }
 
     function parseSseBlock(block) {
@@ -1198,7 +1212,7 @@
 
     async function initializeApp() {
       clearThread();
-      document.getElementById("followups").innerHTML = "";
+      resetComposer();
       await loadChats();
       await loadFiles();
       await loadJobs();
