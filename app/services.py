@@ -1183,6 +1183,7 @@ async def index_file_chunks(file_id: int) -> int:
     text = str(file_row["extracted_text"]).strip()
     chunks = chunk_text(text, FILE_CHUNK_SIZE_CHARS, FILE_CHUNK_OVERLAP_CHARS)
     if not chunks:
+        logger.warning("File %s: no text chunks produced (empty or unextractable content)", file_id)
         replace_file_chunks(file_id, [])
         return 0
     vectors = await embed_texts(chunks, input_type="passage")
@@ -1208,6 +1209,10 @@ async def retrieve_file_context(
         try:
             vec = [float(x) for x in json.loads(row["embedding_json"])]
         except Exception:
+            logger.warning(
+                "Skipping corrupt embedding for file %s chunk %s",
+                row["file_id"], row["chunk_index"],
+            )
             continue
         score = cosine_similarity(qv, vec)
         scored.append((score, row))
