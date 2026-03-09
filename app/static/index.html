@@ -170,8 +170,6 @@
       background: transparent;
       border: none;
       padding: 18px 0;
-      overflow: auto;
-      max-height: calc(100vh - 190px);
       display: flex;
       flex-direction: column;
       gap: 24px;
@@ -602,7 +600,7 @@
           </label>
           <button onclick="ask()" style="border-radius:8px;padding:6px 16px;font-size:13px;">Ask</button>
         </div>
-        <div id="followups" class="row"></div>
+        <div id="followups" style="display: none;"></div>
         <div id="status"></div>
       </section>
     </main>
@@ -1180,8 +1178,18 @@
         const jobTxt = data.job_id ? `, job #${data.job_id}` : "";
         setUploadStatus(`Uploaded: ${data.filename} (#${data.file_id}${jobTxt})`);
         input.value = "";
+        // Auto-select the uploaded file so it's included in the next ask
+        if (data.file_id) {
+          selectedFileIds.add(data.file_id);
+        }
         await loadFiles();
         await loadJobs();
+        // Update status to show file is selected
+        setFileSelectionStatus(
+          activeThreadId === null
+            ? `${selectedFileIds.size} file(s) selected for next new thread`
+            : `${selectedFileIds.size} file(s) attached to thread #${activeThreadId}`
+        );
       } catch (err) {
         setUploadStatus("Upload failed: " + err.message, true);
       }
