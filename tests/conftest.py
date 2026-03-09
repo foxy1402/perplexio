@@ -12,6 +12,7 @@ APP_MODULES = [
     "app.storage",
     "app.services",
     "app.auth",
+    "app.pwa_assets",
     "app.main",
 ]
 

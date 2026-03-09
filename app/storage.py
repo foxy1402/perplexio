@@ -670,9 +670,17 @@ def restore_backup(name: str) -> dict:
         raise HTTPException(status_code=404, detail="Backup not found.")
     # Take a safety snapshot before restore.
     pre = create_persistent_backup()
-    tmp_target = DB_PATH.with_suffix(".restore.tmp")
-    shutil.copy2(src, tmp_target)
-    shutil.move(tmp_target, DB_PATH)
+    # Use sqlite3.backup() for atomic restore — safe even with active connections.
+    source = sqlite3.connect(str(src))
+    dest = sqlite3.connect(DB_PATH)
+    try:
+        source.backup(dest)
+        dest.commit()
+    finally:
+        source.close()
+        dest.close()
+    # Reinitialize storage to pick up any schema changes in the restored DB.
+    init_storage()
     return {"restored_from": safe, "pre_restore_backup": pre.get("name", "")}
 
 

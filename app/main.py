@@ -1,3 +1,4 @@
+import asyncio
 import json
 import html
 import hashlib
@@ -87,7 +88,8 @@ from app.storage import (
     set_thread_file_ids,
     validate_file_ids,
 )
-from app.ui_html import INDEX_HTML
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+_INDEX_HTML_PATH = _STATIC_DIR / "index.html"
 
 
 @asynccontextmanager
@@ -113,6 +115,7 @@ METRICS = {
     "latency_ms_sum": 0.0,
 }
 ASK_CACHE: dict[str, tuple[float, dict]] = {}
+_CACHE_LOCK = asyncio.Lock()
 
 
 def _safe_unlink(path: str) -> None:
@@ -471,7 +474,8 @@ async def ask(payload: AskRequest) -> AskResponse:
 
     cache_key = _cache_key(payload)
     if cache_key:
-        cached = _cache_get(cache_key)
+        async with _CACHE_LOCK:
+            cached = _cache_get(cache_key)
         if cached is not None:
             return AskResponse(**cached)
 
@@ -502,7 +506,8 @@ async def ask(payload: AskRequest) -> AskResponse:
         answer=answer, citations=citations, chat_id=chat_id, thread_id=thread_id
     )
     if cache_key:
-        _cache_set(cache_key, out.model_dump())
+        async with _CACHE_LOCK:
+            _cache_set(cache_key, out.model_dump())
     return out
 
 
@@ -514,7 +519,8 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
 
     cache_key = _cache_key(payload)
     if cache_key:
-        cached = _cache_get(cache_key)
+        async with _CACHE_LOCK:
+            cached = _cache_get(cache_key)
         if cached is not None:
             cached_answer = str(cached.get("answer", ""))
             cached_citations = cached.get("citations", [])
@@ -580,15 +586,16 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
             if validated_file_ids is not None:
                 set_thread_file_ids(thread_id, validated_file_ids)
             if cache_key:
-                _cache_set(
-                    cache_key,
-                    {
-                        "answer": aligned_answer,
-                        "citations": [c.model_dump() for c in citations],
-                        "chat_id": chat_id,
-                        "thread_id": thread_id,
-                    },
-                )
+                async with _CACHE_LOCK:
+                    _cache_set(
+                        cache_key,
+                        {
+                            "answer": aligned_answer,
+                            "citations": [c.model_dump() for c in citations],
+                            "chat_id": chat_id,
+                            "thread_id": thread_id,
+                        },
+                    )
             done = {"chat_id": chat_id, "thread_id": thread_id}
             yield f"event: done\ndata: {json.dumps(done, ensure_ascii=True)}\n\n".encode(
                 "utf-8"
@@ -765,6 +772,6 @@ async def pwa_icon_maskable() -> FileResponse:
     return FileResponse(path=PWA_ICON_PATH, media_type="image/png")
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index() -> str:
-    return INDEX_HTML
+@app.get("/")
+async def index() -> FileResponse:
+    return FileResponse(path=_INDEX_HTML_PATH, media_type="text/html")

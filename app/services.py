@@ -82,6 +82,53 @@ _CROSS_ENCODER = None
 _CROSS_ENCODER_MODEL_NAME = ""
 RRF_K = 60
 
+# Shared httpx clients for connection reuse.
+_llm_client: httpx.AsyncClient | None = None
+_embedding_client: httpx.AsyncClient | None = None
+
+
+def _get_llm_client() -> httpx.AsyncClient:
+    global _llm_client
+    if _llm_client is None or _llm_client.is_closed:
+        _llm_client = httpx.AsyncClient(timeout=httpx.Timeout(OPENAI_TIMEOUT_SECONDS))
+    return _llm_client
+
+
+def _get_embedding_client() -> httpx.AsyncClient:
+    global _embedding_client
+    if _embedding_client is None or _embedding_client.is_closed:
+        _embedding_client = httpx.AsyncClient(timeout=httpx.Timeout(EMBEDDING_TIMEOUT_SECONDS))
+    return _embedding_client
+
+
+def _llm_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if OPENAI_API_KEY:
+        headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+    return headers
+
+
+def _parse_json_array(raw: str, fallback: list | None = None) -> list:
+    """Parse a JSON array from LLM output, with fallback bracket extraction."""
+    text = raw.strip()
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            return data
+    except json.JSONDecodeError:
+        pass
+    # Fallback: find the JSON array within surrounding text.
+    l = text.find("[")
+    r = text.rfind("]")
+    if l >= 0 and r > l:
+        try:
+            data = json.loads(text[l : r + 1])
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+    return fallback if fallback is not None else []
+
 
 def _normalize_tesseract_language(lang: str) -> str | None:
     raw = (lang or "").strip()
@@ -244,9 +291,7 @@ def source_recency_boost(item: dict[str, Any]) -> float:
 
 async def rewrite_queries(query: str) -> list[str]:
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if OPENAI_API_KEY:
-        headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+    headers = _llm_headers()
     prompt = (
         "Rewrite the user query into short web-search queries. "
         "Return JSON array only, 1 to 3 items, no explanation."
@@ -259,24 +304,13 @@ async def rewrite_queries(query: str) -> list[str]:
         ],
         "temperature": 0.1,
     }
-    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(endpoint, headers=headers, json=body)
-            resp.raise_for_status()
-            payload = resp.json()
+        client = _get_llm_client()
+        resp = await client.post(endpoint, headers=headers, json=body)
+        resp.raise_for_status()
+        payload = resp.json()
         raw = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            l = raw.find("[")
-            r = raw.rfind("]")
-            if l >= 0 and r > l:
-                data = json.loads(raw[l : r + 1])
-            else:
-                data = [query]
-        if not isinstance(data, list):
-            return [query]
+        data = _parse_json_array(raw, fallback=[query])
         cleaned: list[str] = []
         seen: set[str] = set()
         for item in data:
@@ -309,9 +343,7 @@ async def generate_followup_queries(
     if not excerpts:
         return []
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if OPENAI_API_KEY:
-        headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+    headers = _llm_headers()
     body = {
         "model": OPENAI_MODEL,
         "messages": [
@@ -326,21 +358,13 @@ async def generate_followup_queries(
         ],
         "temperature": 0.2,
     }
-    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(endpoint, headers=headers, json=body)
-            resp.raise_for_status()
-            payload = resp.json()
+        client = _get_llm_client()
+        resp = await client.post(endpoint, headers=headers, json=body)
+        resp.raise_for_status()
+        payload = resp.json()
         raw = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            l = raw.find("[")
-            r = raw.rfind("]")
-            data = json.loads(raw[l : r + 1]) if l >= 0 and r > l else []
-        if not isinstance(data, list):
-            return []
+        data = _parse_json_array(raw)
         out: list[str] = []
         seen: set[str] = set()
         for item in data:
@@ -577,16 +601,13 @@ def build_llm_messages(
 
 async def ask_model(messages: list[dict[str, str]]) -> str:
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if OPENAI_API_KEY:
-        headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+    headers = _llm_headers()
     body = {"model": OPENAI_MODEL, "messages": messages, "temperature": 0.2}
 
-    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(endpoint, headers=headers, json=body)
-        resp.raise_for_status()
-        payload = resp.json()
+    client = _get_llm_client()
+    resp = await client.post(endpoint, headers=headers, json=body)
+    resp.raise_for_status()
+    payload = resp.json()
 
     choices = payload.get("choices", [])
     if not choices:
@@ -602,9 +623,7 @@ async def suggest_followups(
     question: str, answer: str, citations: list[Any], max_items: int = 4
 ) -> list[str]:
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if OPENAI_API_KEY:
-        headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+    headers = _llm_headers()
     source_lines: list[str] = []
     for i, c in enumerate(citations, start=1):
         if isinstance(c, Citation):
@@ -632,24 +651,13 @@ async def suggest_followups(
         ],
         "temperature": 0.4,
     }
-    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(endpoint, headers=headers, json=body)
-            resp.raise_for_status()
-            payload = resp.json()
+        client = _get_llm_client()
+        resp = await client.post(endpoint, headers=headers, json=body)
+        resp.raise_for_status()
+        payload = resp.json()
         raw = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            l = raw.find("[")
-            r = raw.rfind("]")
-            if l >= 0 and r > l:
-                data = json.loads(raw[l : r + 1])
-            else:
-                data = []
-        if not isinstance(data, list):
-            return []
+        data = _parse_json_array(raw)
         out: list[str] = []
         seen: set[str] = set()
         for item in data:
@@ -670,9 +678,7 @@ async def suggest_followups(
 
 async def ask_model_stream(messages: list[dict[str, str]]) -> AsyncIterator[str]:
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if OPENAI_API_KEY:
-        headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+    headers = _llm_headers()
     body = {
         "model": OPENAI_MODEL,
         "messages": messages,
@@ -680,26 +686,25 @@ async def ask_model_stream(messages: list[dict[str, str]]) -> AsyncIterator[str]
         "stream": True,
     }
 
-    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        async with client.stream("POST", endpoint, headers=headers, json=body) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    payload = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                choices = payload.get("choices", [])
-                if not choices:
-                    continue
-                token = choices[0].get("delta", {}).get("content")
-                if token:
-                    yield str(token)
+    client = _get_llm_client()
+    async with client.stream("POST", endpoint, headers=headers, json=body) as resp:
+        resp.raise_for_status()
+        async for line in resp.aiter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            choices = payload.get("choices", [])
+            if not choices:
+                continue
+            token = choices[0].get("delta", {}).get("content")
+            if token:
+                yield str(token)
 
 
 async def prepare_ask(
@@ -885,11 +890,10 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     if EMBEDDING_API_KEY:
         headers["Authorization"] = f"Bearer {EMBEDDING_API_KEY}"
     body = {"model": EMBEDDING_MODEL, "input": texts}
-    timeout = httpx.Timeout(EMBEDDING_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(endpoint, headers=headers, json=body)
-        resp.raise_for_status()
-        payload = resp.json()
+    client = _get_embedding_client()
+    resp = await client.post(endpoint, headers=headers, json=body)
+    resp.raise_for_status()
+    payload = resp.json()
     data = payload.get("data", [])
     vectors: list[list[float]] = []
     for item in data:
