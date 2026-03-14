@@ -839,6 +839,41 @@ async def suggest_followups(
         return []
 
 
+async def generate_thread_title(query: str, answer: str) -> str:
+    """Generate a short 4-6 word title for a thread based on the first Q&A."""
+    endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
+    headers = _llm_headers()
+    body = {
+        "model": OPENAI_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Generate a concise 4-6 word title for this conversation. "
+                    "Return only the title text, no quotes or trailing punctuation."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Question: {query[:300]}\n\nAnswer excerpt: {answer[:400]}",
+            },
+        ],
+        "temperature": 0.3,
+        "max_tokens": 20,
+    }
+    try:
+        client = _get_llm_client()
+        resp = await _retry_post(client, endpoint, headers=headers, json=body)
+        payload = resp.json()
+        title = str(
+            payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+        ).strip()
+        title = title.strip("\"'")
+        return title[:80] if title else query[:60]
+    except Exception:
+        return query[:60]
+
+
 async def ask_model_stream(messages: list[dict[str, str]]) -> AsyncIterator[str]:
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
     headers = _llm_headers()

@@ -140,6 +140,15 @@ def init_storage() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS thread_titles (
+                thread_id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
 
@@ -284,6 +293,30 @@ def build_file_context(file_ids: list[int] | None = None) -> tuple[str, list[Cit
         )
         chunks.append(f"[F{idx}] File: {name}\nContent:\n{trimmed}")
     return "\n\n".join(chunks), citations
+
+
+def set_thread_title(thread_id: int, title: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO thread_titles (thread_id, title, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                title = excluded.title,
+                updated_at = excluded.updated_at
+            """,
+            (thread_id, title.strip()[:120], utc_now_iso()),
+        )
+        conn.commit()
+
+
+def get_thread_title(thread_id: int) -> str | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT title FROM thread_titles WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    return str(row["title"]) if row else None
 
 
 def save_chat(

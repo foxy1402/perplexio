@@ -52,6 +52,8 @@ from app.models import (
     ThreadDetail,
     ThreadFilesRequest,
     ThreadFilesResponse,
+    ThreadTitleRequest,
+    ThreadTitleResponse,
     UploadResponse,
 )
 from app.pwa_assets import manifest_json, service_worker_js
@@ -62,6 +64,7 @@ from app.services import (
     compute_answer_confidence,
     ask_model,
     ask_model_stream,
+    generate_thread_title,
     get_job_item,
     index_file_for_retrieval,
     list_job_items,
@@ -77,6 +80,7 @@ from app.settings import ASK_CACHE_MAX_ITEMS, ASK_CACHE_TTL_SECONDS
 from app.storage import (
     create_persistent_backup,
     get_backup_path,
+    get_thread_title,
     list_backups,
     restore_backup,
     create_sqlite_backup_file,
@@ -87,6 +91,7 @@ from app.storage import (
     save_chat,
     save_uploaded_file,
     set_thread_file_ids,
+    set_thread_title,
     validate_file_ids,
 )
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -161,6 +166,14 @@ def _cache_set(key: str, value: dict) -> None:
         oldest = sorted(ASK_CACHE.items(), key=lambda kv: kv[1][0])[: max(1, len(ASK_CACHE) - ASK_CACHE_MAX_ITEMS)]
         for k, _v in oldest:
             ASK_CACHE.pop(k, None)
+
+
+async def _save_thread_title(thread_id: int, query: str, answer: str) -> None:
+    try:
+        title = await generate_thread_title(query, answer)
+        set_thread_title(thread_id, title)
+    except Exception:
+        pass
 
 
 @app.middleware("http")
@@ -287,7 +300,7 @@ async def list_chats(limit: int = 50) -> list[ChatItem]:
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT c.id, c.thread_id, c.created_at, c.query, c.answer
+            SELECT c.id, c.thread_id, c.created_at, c.query, c.answer, tt.title
             FROM chats c
             INNER JOIN (
                 SELECT thread_id, MAX(id) AS max_id
@@ -296,6 +309,7 @@ async def list_chats(limit: int = 50) -> list[ChatItem]:
                 ORDER BY max_id DESC
                 LIMIT ?
             ) latest ON latest.max_id = c.id
+            LEFT JOIN thread_titles tt ON tt.thread_id = c.thread_id
             ORDER BY c.id DESC
             """,
             (safe_limit,),
@@ -307,6 +321,7 @@ async def list_chats(limit: int = 50) -> list[ChatItem]:
             created_at=str(r["created_at"]),
             query=str(r["query"]),
             answer=str(r["answer"]),
+            title=str(r["title"]) if r["title"] else None,
         )
         for r in rows
     ]
@@ -370,6 +385,19 @@ async def put_thread_files(thread_id: int, payload: ThreadFilesRequest) -> Threa
         raise HTTPException(status_code=404, detail="Thread not found.")
     file_ids = set_thread_file_ids(thread_id, payload.file_ids)
     return ThreadFilesResponse(thread_id=thread_id, file_ids=file_ids)
+
+
+@app.put("/api/threads/{thread_id}/title", response_model=ThreadTitleResponse)
+async def put_thread_title(thread_id: int, payload: ThreadTitleRequest) -> ThreadTitleResponse:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 AS ok FROM chats WHERE thread_id = ? LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Thread not found.")
+    set_thread_title(thread_id, payload.title)
+    return ThreadTitleResponse(thread_id=thread_id, title=payload.title.strip()[:120])
 
 
 @app.get("/api/chats/{chat_id}", response_model=ChatDetail)
@@ -465,11 +493,16 @@ async def export_thread(thread_id: int, format: str = "markdown"):
                 lines.append(f"{i}. [{title}]({url})")
             lines.append("")
     md = "\n".join(lines)
-    return Response(content=md, media_type="text/markdown; charset=utf-8")
+    return Response(
+        content=md,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="thread-{thread_id}.md"'},
+    )
 
 
 @app.post("/api/ask", response_model=AskResponse)
 async def ask(payload: AskRequest, background_tasks: BackgroundTasks) -> AskResponse:
+    is_new_thread = payload.thread_id is None
     validated_file_ids: list[int] | None = None
     if payload.file_ids is not None:
         validated_file_ids = validate_file_ids(payload.file_ids)
@@ -498,24 +531,30 @@ async def ask(payload: AskRequest, background_tasks: BackgroundTasks) -> AskResp
             "Evidence is limited or conflicting. Treat this as uncertain and verify sources.\n\n"
             + answer
         )
-    answer = answer + f"\n\n(Confidence: {confidence:.2f})"
     chat_id, thread_id = save_chat(
         payload.query, answer, citations, thread_id=payload.thread_id
     )
     if validated_file_ids is not None:
         set_thread_file_ids(thread_id, validated_file_ids)
     out = AskResponse(
-        answer=answer, citations=citations, chat_id=chat_id, thread_id=thread_id
+        answer=answer,
+        citations=citations,
+        chat_id=chat_id,
+        thread_id=thread_id,
+        confidence=confidence,
     )
     if cache_key:
         async with _CACHE_LOCK:
             _cache_set(cache_key, out.model_dump())
     background_tasks.add_task(compress_thread_summary, thread_id)
+    if is_new_thread:
+        background_tasks.add_task(_save_thread_title, thread_id, payload.query, answer)
     return out
 
 
 @app.post("/api/ask/stream")
 async def ask_stream(payload: AskRequest) -> StreamingResponse:
+    is_new_thread = payload.thread_id is None
     validated_file_ids: list[int] | None = None
     if payload.file_ids is not None:
         validated_file_ids = validate_file_ids(payload.file_ids)
@@ -529,6 +568,7 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
             cached_citations = cached.get("citations", [])
             cached_chat_id = int(cached.get("chat_id", 0))
             cached_thread_id = int(cached.get("thread_id", 0))
+            cached_confidence = float(cached.get("confidence", 0.0))
 
             async def cached_stream():
                 yield f"event: meta\ndata: {json.dumps({'citations': cached_citations}, ensure_ascii=True)}\n\n".encode(
@@ -537,7 +577,7 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
                 yield f"event: token\ndata: {json.dumps({'delta': cached_answer}, ensure_ascii=True)}\n\n".encode(
                     "utf-8"
                 )
-                yield f"event: done\ndata: {json.dumps({'chat_id': cached_chat_id, 'thread_id': cached_thread_id}, ensure_ascii=True)}\n\n".encode(
+                yield f"event: done\ndata: {json.dumps({'chat_id': cached_chat_id, 'thread_id': cached_thread_id, 'confidence': cached_confidence}, ensure_ascii=True)}\n\n".encode(
                     "utf-8"
                 )
 
@@ -582,7 +622,6 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
                     "Evidence is limited or conflicting. Treat this as uncertain and verify sources.\n\n"
                     + aligned_answer
                 )
-            aligned_answer = aligned_answer + f"\n\n(Confidence: {confidence:.2f})"
             chat_id, thread_id = save_chat(
                 payload.query, aligned_answer, citations, thread_id=payload.thread_id
             )
@@ -597,14 +636,19 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
                             "citations": [c.model_dump() for c in citations],
                             "chat_id": chat_id,
                             "thread_id": thread_id,
+                            "confidence": confidence,
                         },
                     )
-            done = {"chat_id": chat_id, "thread_id": thread_id}
+            done = {"chat_id": chat_id, "thread_id": thread_id, "confidence": confidence}
             yield f"event: done\ndata: {json.dumps(done, ensure_ascii=True)}\n\n".encode(
                 "utf-8"
             )
-            # Trigger background summarization for the thread.
-            await compress_thread_summary(thread_id)
+            # Run background tasks without blocking the stream.
+            asyncio.create_task(compress_thread_summary(thread_id))
+            if is_new_thread:
+                asyncio.create_task(
+                    _save_thread_title(thread_id, payload.query, aligned_answer)
+                )
             if aligned_answer != answer:
                 final_payload = {"answer": aligned_answer}
                 yield (

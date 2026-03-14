@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 class AskRequest(BaseModel):
     query: str = Field(min_length=2, max_length=400)
-    top_k: int | None = Field(default=None, ge=1, le=10)
+    top_k: int | None = Field(default=None, ge=1, le=50)
     include_files: bool = True
     thread_id: int | None = Field(default=None, ge=1)
     file_ids: list[int] | None = None
@@ -21,6 +21,7 @@ class AskResponse(BaseModel):
     citations: list[Citation]
     chat_id: int
     thread_id: int
+    confidence: float = 0.0
 
 
 class UploadResponse(BaseModel):
@@ -38,6 +39,7 @@ class ChatItem(BaseModel):
     created_at: str
     query: str
     answer: str
+    title: str | None = None
 
 
 class ChatDetail(BaseModel):
@@ -140,3 +142,12 @@ class BackupRestoreRequest(BaseModel):
 class BackupRestoreResponse(BaseModel):
     restored_from: str
     pre_restore_backup: str
+
+
+class ThreadTitleRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+
+
+class ThreadTitleResponse(BaseModel):
+    thread_id: int
+    title: str

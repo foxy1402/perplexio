@@ -12,7 +12,7 @@
   <link rel="icon" href="/icons/icon.png" type="image/png" />
   <link rel="apple-touch-icon" href="/icons/icon.png" />
   <title>Perplexio</title>
-  
+
   <!-- Markdown & Code Highlighting -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
@@ -63,9 +63,7 @@
       align-items: center;
       gap: 8px;
     }
-    .brand svg {
-      color: var(--ink) !important;
-    }
+    .brand svg { color: var(--ink) !important; }
     .hint {
       margin: 0;
       color: var(--muted);
@@ -133,6 +131,7 @@
       transition: background 0.2s, color 0.2s;
     }
     .history button:hover { background: var(--panel); color: var(--ink); }
+    .history button.active-thread { background: var(--panel); color: var(--ink); }
     .filelist li {
       color: var(--muted);
       font-size: 13px;
@@ -216,18 +215,12 @@
       padding: 2px 4px;
       border-radius: 4px;
     }
-    .answer pre code {
-      background: transparent;
-      padding: 0;
-    }
-    .answer p {
-      margin: 0 0 12px 0;
-    }
-    .answer p:last-child {
-      margin-bottom: 0;
-    }
+    .answer pre code { background: transparent; padding: 0; }
+    .answer p { margin: 0 0 12px 0; }
+    .answer p:last-child { margin-bottom: 0; }
     .sources {
       margin-top: 16px;
+      margin-bottom: 8px;
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
@@ -246,10 +239,23 @@
       gap: 2px;
       transition: background 0.2s;
     }
-    .source-card:hover {
-      background: var(--panel-2);
+    .source-card:hover { background: var(--panel-2); }
+    .sc-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      min-width: 0;
+    }
+    .sc-favicon {
+      flex-shrink: 0;
+      border-radius: 2px;
+      margin-top: 1px;
+      width: 16px;
+      height: 16px;
     }
     .source-card a {
+      flex: 1;
+      min-width: 0;
       color: var(--ink);
       text-decoration: none;
       font-weight: 500;
@@ -260,7 +266,7 @@
       overflow: hidden;
     }
     .source-card p {
-      margin: 6px 0 0 0;
+      margin: 4px 0 0 0;
       color: var(--muted);
       font-size: 12px;
       line-height: 1.4;
@@ -268,9 +274,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .source-card details {
-      margin-top: 8px;
-    }
+    .source-card details { margin-top: 6px; }
     .source-card details summary {
       color: var(--muted);
       font-size: 11px;
@@ -278,10 +282,99 @@
     }
     .source-card details p {
       white-space: normal;
+      display: -webkit-box;
       -webkit-line-clamp: 3;
       -webkit-box-orient: vertical;
-      display: -webkit-box;
+      overflow: hidden;
+      margin: 4px 0 0 0;
     }
+    /* Streaming cursor */
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    .cursor-blink {
+      display: inline-block;
+      animation: blink 0.9s step-end infinite;
+      color: var(--muted);
+      margin-left: 1px;
+    }
+    /* Confidence badge */
+    .confidence-badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 20px;
+      padding: 2px 9px;
+      font-size: 11px;
+      font-weight: 500;
+      margin-top: 8px;
+    }
+    .confidence-high { background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); }
+    .confidence-mid  { background: rgba(234,179,8,0.12);  color: #facc15; border: 1px solid rgba(234,179,8,0.25); }
+    .confidence-low  { background: rgba(239,68,68,0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
+    /* Copy button */
+    .copy-btn {
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 8px;
+      transition: all 0.15s;
+    }
+    .copy-btn:hover { background: var(--panel-2); color: var(--ink); }
+    .copy-btn svg { flex-shrink: 0; }
+    /* Mode chips */
+    .mode-chips {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .mode-chip {
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      border-radius: 20px;
+      padding: 3px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .mode-chip:hover { background: var(--panel-2); color: var(--ink); }
+    .mode-chip.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+    /* Voice button */
+    .voice-btn {
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      border-radius: 20px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+    .voice-btn:hover { background: var(--panel-2); }
+    .voice-btn svg { width: 14px; height: 14px; }
+    @keyframes pulse-red {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.45; }
+    }
+    .voice-btn.recording {
+      border-color: #ef4444;
+      color: #ef4444;
+      animation: pulse-red 1s ease infinite;
+    }
+    /* Composer */
     .composer {
       border: 1px solid var(--line);
       background: var(--panel);
@@ -305,32 +398,13 @@
     }
     textarea:focus { outline: none; }
     textarea::placeholder { color: #52525b; }
-    .composer:focus-within {
-      border-color: #52525b;
-    }
+    .composer:focus-within { border-color: #52525b; }
     .row {
       display: flex;
       gap: 12px;
       flex-wrap: wrap;
       align-items: center;
     }
-    input[type="file"] {
-      color: var(--muted);
-      font-size: 12px;
-      max-width: 180px;
-    }
-    input[type="file"]::file-selector-button {
-      background: var(--panel-2);
-      color: var(--ink);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 4px 10px;
-      margin-right: 8px;
-      cursor: pointer;
-      font-size: 12px;
-      transition: background 0.2s;
-    }
-    input[type="file"]::file-selector-button:hover { background: #3f3f46; }
     .sidebar button.secondary {
       background: transparent;
       color: var(--muted);
@@ -366,6 +440,7 @@
       transition: opacity 0.2s;
     }
     button:hover { opacity: 0.9; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
     button.secondary {
       background: var(--panel-2);
       color: var(--ink);
@@ -382,23 +457,20 @@
       min-height: 16px;
     }
     .error { color: var(--error); }
-
     .citation-chip {
       display: inline-block;
       background: var(--line);
-      color: var(--ink);
+      color: #9cd8ff;
       padding: 2px 6px;
       border-radius: 4px;
       font-size: 11px;
       text-decoration: none;
-      margin: 0 4px;
+      margin: 0 3px;
       vertical-align: middle;
       border: 1px solid var(--line);
       transition: background 0.2s;
     }
-    .citation-chip:hover {
-      background: var(--panel-2);
-    }
+    .citation-chip:hover { background: var(--panel-2); }
     .settings-container {
       margin-top: auto;
       position: relative;
@@ -438,19 +510,15 @@
       width: 100%;
       transition: background 0.2s, color 0.2s;
     }
-    .btn-icon:hover {
-      background: var(--panel);
-      color: var(--ink);
-    }
+    .btn-icon:hover { background: var(--panel); color: var(--ink); }
     .composer-tools {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-top: 8px;
+      margin-top: 4px;
+      flex-wrap: wrap;
     }
-    .composer-tools input[type="file"] {
-      display: none;
-    }
+    .composer-tools input[type="file"] { display: none; }
     .composer-upload-btn {
       background: transparent;
       border: 1px solid var(--line);
@@ -484,16 +552,8 @@
       padding: 24px;
       box-shadow: var(--shadow);
     }
-    .auth-card h2 {
-      margin: 0 0 12px 0;
-      font-size: 20px;
-      font-weight: 500;
-    }
-    .auth-card p {
-      margin: 0 0 20px 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
+    .auth-card h2 { margin: 0 0 12px 0; font-size: 20px; font-weight: 500; }
+    .auth-card p  { margin: 0 0 20px 0; color: var(--muted); font-size: 14px; }
     .auth-card input {
       width: 100%;
       border: 1px solid var(--line);
@@ -504,14 +564,12 @@
       font: inherit;
       margin-bottom: 16px;
     }
-    .auth-card button {
-      width: 100%;
-    }
+    .auth-card button { width: 100%; }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
-      .main { order: 1; padding: 16px; }
+      .main   { order: 1; padding: 16px; }
       .sidebar { order: 2; border-right: 0; border-top: 1px solid var(--line); padding: 16px; }
-      .thread { max-height: 56vh; }
+      .thread  { max-height: 56vh; }
       .composer { position: sticky; bottom: 12px; z-index: 10; }
     }
   </style>
@@ -532,7 +590,7 @@
     <aside class="sidebar">
       <div>
         <h1 class="brand">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; color: var(--ink);"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
           Perplexio
         </h1>
         <p class="hint">Search + Grounded QA</p>
@@ -540,7 +598,7 @@
 
       <button class="btn-new-chat" onclick="newChat()">
         New Thread
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       </button>
 
       <div class="panel">
@@ -553,10 +611,9 @@
         </div>
       </div>
 
-      
       <div class="settings-container" id="settingsContainer">
         <button class="btn-icon" onclick="toggleSettings()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           Settings
         </button>
         <div id="settingsMenu" class="settings-menu panel">
@@ -570,7 +627,7 @@
           <ul id="jobList" class="filelist"></ul>
           <ul id="backupList" class="filelist"></ul>
           <h3>Knowledge (Uploaded)</h3>
-          <div class="row" style="margin-bottom: 4px;">
+          <div class="row" style="margin-bottom:4px;">
             <button class="secondary" onclick="saveThreadFiles()">Link checks</button>
           </div>
           <ul id="fileList" class="filelist"></ul>
@@ -582,26 +639,26 @@
       <section class="composer">
         <textarea id="q" placeholder="Ask the web, your uploaded docs, or both..."></textarea>
         <div class="composer-tools">
-          <label style="cursor: pointer;" class="composer-upload-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+          <label class="composer-upload-btn" style="cursor:pointer;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
             Attach
             <input id="fileInput" type="file" onchange="upload()" />
           </label>
+          <button id="voiceBtn" class="voice-btn" onclick="toggleVoice()" title="Voice input" style="display:none;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </button>
           <div id="uploadStatus"></div>
           <div id="fileSelectionStatus" class="hint"></div>
           <div style="flex:1;"></div>
-          <label style="color:var(--muted);font-size:13px;display:flex;align-items:center;gap:4px;">
-            <select id="searchMode" style="background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:13px;">
-              <option value="auto" selected>auto</option>
-              <option value="all">web + files</option>
-              <option value="files">files only</option>
-              <option value="web">web only</option>
-              <option value="social">social</option>
-            </select>
-          </label>
-          <button onclick="ask()" style="border-radius:8px;padding:6px 16px;font-size:13px;">Ask</button>
+          <div class="mode-chips" id="modeChips">
+            <button class="mode-chip active" data-mode="auto"   onclick="setMode(this)">Auto</button>
+            <button class="mode-chip"        data-mode="web"    onclick="setMode(this)">Web</button>
+            <button class="mode-chip"        data-mode="files"  onclick="setMode(this)">Files</button>
+            <button class="mode-chip"        data-mode="social" onclick="setMode(this)">Social</button>
+            <button class="mode-chip"        data-mode="all"    onclick="setMode(this)">All</button>
+          </div>
+          <button id="askBtn" onclick="ask()" style="border-radius:8px;padding:6px 16px;font-size:13px;">Ask</button>
         </div>
-        <div id="followups" style="display: none;"></div>
         <div id="status"></div>
       </section>
     </main>
@@ -613,101 +670,147 @@
     </div>
   </template>
   <script>
-    
-    function toggleSettings() {
-      const menu = document.getElementById("settingsMenu");
-      menu.classList.toggle("open");
-    }
+    /* ── state ── */
     let activeThreadId = null;
-    let activeChatId = null;
+    let activeChatId   = null;
     const selectedFileIds = new Set();
     let allFiles = [];
     let authEnabled = false;
     let jobsPollTimer = null;
+    let recognition   = null;
+    let recognizing   = false;
+    let _msgCounter   = 0;
 
+    /* ── PWA ── */
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker.register("/sw.js").catch(() => {});
       });
     }
 
-    function formatTime(iso) {
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return iso || "";
-      return d.toLocaleString();
+    /* ── settings toggle ── */
+    function toggleSettings() {
+      document.getElementById("settingsMenu").classList.toggle("open");
     }
 
-    function setStatus(text, isError=false) {
+    /* ── voice input ── */
+    function setupVoice() {
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRec) return;
+      recognition = new SpeechRec();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = "en-US";
+      recognition.onresult = (ev) => {
+        let t = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) t += ev.results[i][0].transcript;
+        const el = document.getElementById("q");
+        el.value = t;
+        el.style.height = "auto";
+        el.style.height = el.scrollHeight + "px";
+      };
+      recognition.onend = () => {
+        recognizing = false;
+        document.getElementById("voiceBtn").classList.remove("recording");
+      };
+      recognition.onerror = () => {
+        recognizing = false;
+        document.getElementById("voiceBtn").classList.remove("recording");
+      };
+      document.getElementById("voiceBtn").style.display = "";
+    }
+    function toggleVoice() {
+      if (!recognition) return;
+      if (recognizing) {
+        recognition.stop();
+      } else {
+        recognition.start();
+        recognizing = true;
+        document.getElementById("voiceBtn").classList.add("recording");
+      }
+    }
+
+    /* ── search mode chips ── */
+    function setMode(btn) {
+      document.querySelectorAll(".mode-chip").forEach(c => c.classList.remove("active"));
+      btn.classList.add("active");
+    }
+    function getSearchMode() {
+      const active = document.querySelector(".mode-chip.active");
+      return active ? active.dataset.mode : "auto";
+    }
+    function resetModeChips() {
+      document.querySelectorAll(".mode-chip").forEach(c => c.classList.remove("active"));
+      const auto = document.querySelector(".mode-chip[data-mode='auto']");
+      if (auto) auto.classList.add("active");
+    }
+
+    /* ── helpers ── */
+    function formatTime(iso) {
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? (iso || "") : d.toLocaleString();
+    }
+    function getDomainFromUrl(url) {
+      try { return new URL(url).hostname; } catch { return ""; }
+    }
+    function truncate(s, n = 70) {
+      if (!s) return "";
+      return s.length <= n ? s : s.slice(0, n - 1) + "…";
+    }
+    function sortedSelectedFileIds() {
+      return Array.from(selectedFileIds).sort((a, b) => a - b);
+    }
+    function uniqueMsgId() {
+      return "msg-" + (++_msgCounter) + "-" + Math.floor(Math.random() * 99999);
+    }
+
+    /* ── status helpers ── */
+    function setStatus(text, isError = false) {
       const el = document.getElementById("status");
       el.textContent = text || "";
       el.className = isError ? "error" : "";
     }
-
-    function setUploadStatus(text, isError=false) {
+    function setUploadStatus(text, isError = false) {
       const el = document.getElementById("uploadStatus");
       el.textContent = text || "";
       el.className = isError ? "error" : "";
     }
-
-    function setFileSelectionStatus(text, isError=false) {
+    function setFileSelectionStatus(text, isError = false) {
       const el = document.getElementById("fileSelectionStatus");
       el.textContent = text || "";
       el.className = isError ? "hint error" : "hint";
     }
-
-    function resetComposer() {
-      document.getElementById("q").value = "";
-      const q = document.getElementById("q");
-      q.style.height = "auto";
-      document.getElementById("searchMode").value = "auto";
-      document.getElementById("fileInput").value = "";
-      setUploadStatus("");
-      setStatus("");
-      const followups = document.getElementById("followups");
-      followups.innerHTML = "";
-      followups.style.display = "none";
-    }
-
-    function setAuthStatus(text, isError=false) {
+    function setAuthStatus(text, isError = false) {
       const el = document.getElementById("authStatus");
       el.textContent = text || "";
       el.className = isError ? "hint error" : "hint";
     }
 
+    /* ── auth ── */
     function showAuthOverlay(show) {
-      const el = document.getElementById("authOverlay");
-      el.style.display = show ? "flex" : "none";
+      document.getElementById("authOverlay").style.display = show ? "flex" : "none";
     }
-
-    async function apiFetch(url, options={}) {
+    async function apiFetch(url, options = {}) {
       const res = await fetch(url, options);
-      if (res.status === 401) {
-        showAuthOverlay(true);
-        throw new Error("Unauthorized");
-      }
+      if (res.status === 401) { showAuthOverlay(true); throw new Error("Unauthorized"); }
       return res;
     }
-
     async function ensureAuth() {
       const res = await fetch("/auth/me");
-      if (!res.ok) {
-        throw new Error("Auth check failed");
-      }
+      if (!res.ok) throw new Error("Auth check failed");
       const data = await res.json();
       authEnabled = !!data.auth_enabled;
       showAuthOverlay(authEnabled && !data.authenticated);
       return data;
     }
-
     async function login() {
       const input = document.getElementById("passwordInput");
-      const password = input.value;
-      setAuthStatus("Signing in...");
+      setAuthStatus("Signing in…");
       try {
         const res = await fetch("/auth/login", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({ password })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: input.value })
         });
         if (!res.ok) throw new Error(await res.text());
         showAuthOverlay(false);
@@ -718,302 +821,405 @@
         setAuthStatus("Login failed: " + err.message, true);
       }
     }
-
     async function logout() {
       await fetch("/auth/logout", { method: "POST" });
-      if (jobsPollTimer !== null) {
-        clearInterval(jobsPollTimer);
-        jobsPollTimer = null;
-      }
-      if (authEnabled) {
-        showAuthOverlay(true);
-      }
+      if (jobsPollTimer !== null) { clearInterval(jobsPollTimer); jobsPollTimer = null; }
+      if (authEnabled) showAuthOverlay(true);
     }
 
-    async function purgeAllData() {
-      const ok = window.confirm("Delete all chats and uploaded files from this instance?");
-      if (!ok) return;
-      setStatus("Purging data...");
-      try {
-        const res = await apiFetch("/api/admin/purge", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({ confirm: true })
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        activeThreadId = null;
-        activeChatId = null;
-        selectedFileIds.clear();
-        allFiles = [];
-        resetComposer();
-        clearThread();
-        await loadChats();
-        await loadFiles();
-        setFileSelectionStatus("No thread selected. File choices apply to the next ask.");
-        setStatus(
-          `Purged chats=${data.deleted_chat_count}, files=${data.deleted_file_count}, chunks=${data.deleted_chunk_count}`
-        );
-      } catch (err) {
-        setStatus("Purge failed: " + err.message, true);
-      }
-    }
-
-    async function exportThread() {
-      if (activeThreadId === null) {
-        setStatus("No active thread to export.", true);
-        return;
-      }
-      const url = `/api/threads/${activeThreadId}/export?format=markdown`;
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
-
-    async function loadJobs() {
-      const list = document.getElementById("jobList");
-      list.innerHTML = "";
-      try {
-        const res = await apiFetch("/api/jobs?limit=10");
-        if (!res.ok) throw new Error(await res.text());
-        const jobs = await res.json();
-        jobs.forEach(j => {
-          const li = document.createElement("li");
-          li.textContent = `#${j.id} ${j.job_type} ${j.status} ${Math.round((j.progress || 0) * 100)}%`;
-          list.appendChild(li);
-        });
-        if (jobs.length === 0) {
-          const li = document.createElement("li");
-          li.textContent = "No jobs yet";
-          list.appendChild(li);
-        }
-      } catch (err) {
-        const li = document.createElement("li");
-        li.textContent = "Failed to load jobs";
-        list.appendChild(li);
-      }
-    }
-
-    async function loadBackups() {
-      const list = document.getElementById("backupList");
-      list.innerHTML = "";
-      try {
-        const res = await apiFetch("/api/admin/backups");
-        if (!res.ok) throw new Error(await res.text());
-        const backups = await res.json();
-        backups.forEach(b => {
-          const li = document.createElement("li");
-          const wrap = document.createElement("div");
-          wrap.style.display = "flex";
-          wrap.style.gap = "6px";
-          wrap.style.alignItems = "center";
-          const name = document.createElement("span");
-          name.textContent = `${b.name} (${Math.ceil(b.size_bytes / 1024)} KB)`;
-          const dl = document.createElement("button");
-          dl.className = "secondary";
-          dl.textContent = "DL";
-          dl.onclick = () => window.open(`/api/admin/backups/${encodeURIComponent(b.name)}/download`, "_blank");
-          const rs = document.createElement("button");
-          rs.className = "secondary";
-          rs.textContent = "Restore";
-          rs.onclick = async () => {
-            const ok = window.confirm(`Restore backup ${b.name}? This overwrites current DB.`);
-            if (!ok) return;
-            const r = await apiFetch(`/api/admin/backups/${encodeURIComponent(b.name)}/restore`, {
-              method: "POST",
-              headers: {"Content-Type": "application/json"},
-              body: JSON.stringify({confirm: true})
-            });
-            if (!r.ok) throw new Error(await r.text());
-            setStatus(`Restored backup ${b.name}. Reloading...`);
-            setTimeout(() => window.location.reload(), 1200);
-          };
-          wrap.appendChild(name);
-          wrap.appendChild(dl);
-          wrap.appendChild(rs);
-          li.appendChild(wrap);
-          list.appendChild(li);
-        });
-        if (backups.length === 0) {
-          const li = document.createElement("li");
-          li.textContent = "No backups yet";
-          list.appendChild(li);
-        }
-      } catch (err) {
-        const li = document.createElement("li");
-        li.textContent = "Failed to load backups";
-        list.appendChild(li);
-      }
-    }
-
-    async function createBackup() {
-      setStatus("Creating backup...");
-      try {
-        const res = await apiFetch("/api/admin/backups/create", { method: "POST" });
-        if (!res.ok) throw new Error(await res.text());
-        const b = await res.json();
-        setStatus(`Backup created: ${b.name}`);
-        await loadBackups();
-      } catch (err) {
-        setStatus("Backup failed: " + err.message, true);
-      }
-    }
-
-    function truncate(s, n=70) {
-      if (!s) return "";
-      return s.length <= n ? s : (s.slice(0, n - 1) + "...");
-    }
-
-    function sortedSelectedFileIds() {
-      return Array.from(selectedFileIds).sort((a, b) => a - b);
-    }
-
-    function appendSources(target, citations) {
-      if (!Array.isArray(citations) || citations.length === 0) return;
-      const s = document.createElement("div");
-      s.className = "sources";
-      citations.forEach((c, i) => {
-        const card = document.createElement("div");
-        card.className = "source-card";
-        card.id = `source-${i + 1}`;
-        const link = document.createElement("a");
-        link.href = c.url;
-        link.target = "_blank";
-        link.rel = "noreferrer";
-        link.textContent = `[${i + 1}] ${c.title || c.url}`;
-        card.appendChild(link);
-        try {
-          const u = new URL(c.url, window.location.origin);
-          const host = document.createElement("p");
-          host.textContent = u.hostname;
-          card.appendChild(host);
-        } catch {}
-        const details = document.createElement("details");
-        const summary = document.createElement("summary");
-        summary.textContent = "snippet";
-        details.appendChild(summary);
-        const p = document.createElement("p");
-        p.textContent = c.snippet || "";
-        details.appendChild(p);
-        card.appendChild(details);
-        s.appendChild(card);
-      });
-      target.appendChild(s);
-    }
-
-    // Configure marked with highlight.js
+    /* ── marked / highlight config ── */
     marked.setOptions({
-      highlight: function(code, lang) {
-        if (lang && hljs.getLanguage(lang)) {
-          return hljs.highlight(code, { language: lang }).value;
-        }
+      highlight: (code, lang) => {
+        if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
         return hljs.highlightAuto(code).value;
       },
       breaks: true
     });
 
+    /* ── answer rendering ── */
     function setAnswerContent(answerEl, text, citations) {
       answerEl.innerHTML = "";
-      
-      // 1. First process citations in the raw markdown text
-      // Replace literal \n sequences (from JSON) with actual newlines for markdown
-      let processedText = String(text || "").replace(/\\n/g, '\n');
-      const regex = /\[(\d+)\]/g;
-      
-      processedText = processedText.replace(regex, (match, refNumStr) => {
-        const refNum = Number(refNumStr);
-        let domainText = `[${refNum}]`;
-        if (citations && citations[refNum - 1] && citations[refNum - 1].url) {
-          try {
-            const u = new URL(citations[refNum - 1].url);
-            domainText = u.hostname.replace('www.', '');
-          } catch(e) {}
+      // Strip legacy confidence suffix that may exist in stored answers
+      let processed = String(text || "").replace(/\n\n\(Confidence:\s*\d+\.\d+\)\s*$/, "");
+      // Normalise escaped newlines
+      processed = processed.replace(/\\n/g, "\n");
+
+      // Resolve the parent message ID for namespaced anchor links
+      const parentMsg = answerEl.closest("article.message");
+      const msgId = parentMsg ? (parentMsg.id || "msg") : "msg";
+
+      // Replace [N] citation references with clickable chips
+      processed = processed.replace(/\[(\d+)\]/g, (match, numStr) => {
+        const n = Number(numStr);
+        let label = `[${n}]`;
+        if (citations && citations[n - 1] && citations[n - 1].url) {
+          try { label = new URL(citations[n - 1].url).hostname.replace("www.", ""); } catch {}
         }
-        // Return HTML for the citation chip
-        return `<a href="#source-${refNum}" class="citation-chip" style="color: #9cd8ff; text-decoration: none;" onclick="event.preventDefault(); const card = document.getElementById('source-${refNum}'); if(card) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); card.style.outline = '1px solid #5da3ff'; setTimeout(() => { card.style.outline = ''; }, 1200); }">${domainText}</a>`;
+        const anchorId = `${msgId}-src-${n}`;
+        return `<a href="#${anchorId}" class="citation-chip" onclick="event.preventDefault();` +
+          `const c=document.getElementById('${anchorId}');` +
+          `if(c){c.scrollIntoView({behavior:'smooth',block:'center'});` +
+          `c.style.outline='1px solid #5da3ff';setTimeout(()=>{c.style.outline=''},1200);}">${label}</a>`;
       });
-      
-      // 2. Parse the markdown to HTML
-      answerEl.innerHTML = marked.parse(processedText);
+
+      answerEl.innerHTML = marked.parse(processed);
     }
 
-    async function loadFollowups(chatId) {
-      const box = document.getElementById("followups");
-      box.innerHTML = "";
-      if (!chatId) return;
-      try {
-        const res = await apiFetch(`/api/chats/${chatId}/followups?limit=4`);
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        (data.suggestions || []).forEach(s => {
-          const b = document.createElement("button");
-          b.className = "secondary";
-          b.textContent = s;
-          b.onclick = () => { document.getElementById("q").value = s; };
-          box.appendChild(b);
-        });
-      } catch (_err) {}
+    /* ── confidence badge ── */
+    function makeConfidenceBadge(confidence) {
+      const badge = document.createElement("div");
+      badge.className = "confidence-badge";
+      const pct = Math.round(confidence * 100);
+      if (confidence >= 0.7)      badge.classList.add("confidence-high");
+      else if (confidence >= 0.4) badge.classList.add("confidence-mid");
+      else                        badge.classList.add("confidence-low");
+      badge.textContent = pct + "% confident";
+      return badge;
     }
 
+    /* ── copy button ── */
+    function addCopyButton(msg, rawText) {
+      const existing = msg.querySelector(".copy-btn");
+      if (existing) existing.remove();
+      const btn = document.createElement("button");
+      btn.className = "copy-btn";
+      btn.innerHTML =
+        `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+        `<rect x="9" y="9" width="13" height="13" rx="2"/>` +
+        `<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`;
+      btn.title = "Copy answer";
+      btn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(rawText);
+          btn.textContent = "✓ Copied";
+          setTimeout(() => {
+            btn.innerHTML =
+              `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+              `<rect x="9" y="9" width="13" height="13" rx="2"/>` +
+              `<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`;
+          }, 2000);
+        } catch {}
+      };
+      msg.appendChild(btn);
+    }
+
+    /* ── source card builder (with favicons) ── */
+    function buildSourcesEl(citations, msgId) {
+      const wrap = document.createElement("div");
+      wrap.className = "sources";
+      citations.forEach((c, i) => {
+        const card = document.createElement("div");
+        card.className = "source-card";
+        card.id = `${msgId}-src-${i + 1}`;
+
+        // Favicon + title row
+        const header = document.createElement("div");
+        header.className = "sc-header";
+        const domain = getDomainFromUrl(c.url);
+        if (domain) {
+          const img = document.createElement("img");
+          img.className = "sc-favicon";
+          img.src = `https://www.google.com/s2/favicons?sz=16&domain=${domain}`;
+          img.width = 16; img.height = 16;
+          img.onerror = function () { this.style.display = "none"; };
+          header.appendChild(img);
+        }
+        const link = document.createElement("a");
+        link.href = c.url; link.target = "_blank"; link.rel = "noreferrer";
+        link.textContent = `[${i + 1}] ${c.title || c.url}`;
+        header.appendChild(link);
+        card.appendChild(header);
+
+        // Domain line
+        if (domain) {
+          const p = document.createElement("p");
+          p.textContent = domain;
+          card.appendChild(p);
+        }
+
+        // Snippet (collapsible)
+        if (c.snippet) {
+          const details = document.createElement("details");
+          const summary = document.createElement("summary");
+          summary.textContent = "snippet";
+          details.appendChild(summary);
+          const sp = document.createElement("p");
+          sp.textContent = c.snippet;
+          details.appendChild(sp);
+          card.appendChild(details);
+        }
+
+        wrap.appendChild(card);
+      });
+      return wrap;
+    }
+
+    function appendSources(target, citations) {
+      if (!Array.isArray(citations) || citations.length === 0) return;
+      const msg = target.closest("article.message") || target;
+      const msgId = msg.id || "msg";
+      target.appendChild(buildSourcesEl(citations, msgId));
+    }
+
+    /* ── SSE parser ── */
+    function parseSseBlock(block) {
+      const lines = block.split("\n");
+      let event = "message";
+      let data = "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (!data) return null;
+      try { return { event, payload: JSON.parse(data) }; } catch { return null; }
+    }
+
+    /* ── reset composer ── */
+    function resetComposer() {
+      const q = document.getElementById("q");
+      q.value = "";
+      q.style.height = "56px";
+      resetModeChips();
+      document.getElementById("fileInput").value = "";
+      setUploadStatus("");
+      setStatus("");
+    }
+
+    /* ── render a complete message (used for history loading) ── */
     function renderMessage(query, answer, citations, metaText) {
       const thread = document.getElementById("thread");
       const msg = document.createElement("article");
       msg.className = "message";
+      msg.id = uniqueMsgId();
 
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      meta.textContent = metaText || "";
-      msg.appendChild(meta);
+      const metaEl = document.createElement("div");
+      metaEl.className = "meta";
+      metaEl.textContent = metaText || "";
+      msg.appendChild(metaEl);
 
-      const q = document.createElement("div");
-      q.className = "query";
-      q.textContent = query;
-      msg.appendChild(q);
+      const qEl = document.createElement("div");
+      qEl.className = "query";
+      qEl.textContent = query;
+      msg.appendChild(qEl);
 
-      const a = document.createElement("div");
-      a.className = "answer";
-      setAnswerContent(a, answer || "", citations || []);
-      msg.appendChild(a);
+      const aEl = document.createElement("div");
+      aEl.className = "answer";
 
-      appendSources(msg, citations);
+      // Detect and strip legacy confidence suffix, show as badge
+      const confMatch = String(answer || "").match(/\n\n\(Confidence:\s*(\d+\.\d+)\)\s*$/);
+      const legacyConf = confMatch ? parseFloat(confMatch[1]) : null;
+
+      msg.appendChild(aEl);
+      setAnswerContent(aEl, answer || "", citations || []);
+      appendSources(msg, citations || []);
+
+      if (legacyConf !== null) {
+        msg.appendChild(makeConfidenceBadge(legacyConf));
+      }
+      addCopyButton(msg, String(answer || "").replace(/\n\n\(Confidence:\s*\d+\.\d+\)\s*$/, ""));
+
       thread.appendChild(msg);
       thread.scrollTop = thread.scrollHeight;
-      return { msg, answerEl: a };
+      return { msg, answerEl: aEl };
     }
 
+    /* ── clear thread ── */
     function clearThread() {
       const thread = document.getElementById("thread");
       thread.innerHTML = "";
       thread.appendChild(document.getElementById("welcomeTpl").content.cloneNode(true));
     }
-
     function clearThreadEmpty() {
-      const thread = document.getElementById("thread");
-      thread.innerHTML = "";
+      document.getElementById("thread").innerHTML = "";
     }
 
-    function renderFiles() {
-      const fileList = document.getElementById("fileList");
-      fileList.innerHTML = "";
-      allFiles.forEach(file => {
-        const li = document.createElement("li");
-        const label = document.createElement("label");
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = selectedFileIds.has(file.id);
-        cb.onchange = () => {
-          if (cb.checked) selectedFileIds.add(file.id);
-          else selectedFileIds.delete(file.id);
-          setFileSelectionStatus(
-            activeThreadId === null
-              ? `${selectedFileIds.size} file(s) selected for next new thread`
-              : `${selectedFileIds.size} file(s) selected for thread #${activeThreadId} (click Save to persist)`
-          );
-        };
-        const text = document.createElement("span");
-        text.textContent = `${file.original_name} (${Math.ceil(file.size_bytes / 1024)} KB)`;
-        label.appendChild(cb);
-        label.appendChild(text);
-        li.appendChild(label);
-        fileList.appendChild(li);
+    /* ── streaming ask ── */
+    async function ask() {
+      const qEl  = document.getElementById("q");
+      const q    = qEl.value.trim();
+      if (!q) return;
+
+      const askBtn = document.getElementById("askBtn");
+      if (askBtn) { askBtn.disabled = true; }
+
+      const fileIds    = sortedSelectedFileIds();
+      const searchMode = getSearchMode();
+
+      if (activeThreadId === null) clearThreadEmpty();
+
+      // Build message article up-front
+      const thread = document.getElementById("thread");
+      const msg   = document.createElement("article");
+      msg.className = "message";
+      msg.id = uniqueMsgId();
+
+      const metaEl = document.createElement("div");
+      metaEl.className = "meta";
+      metaEl.textContent = "thinking…";
+      msg.appendChild(metaEl);
+
+      const qDisplay = document.createElement("div");
+      qDisplay.className = "query";
+      qDisplay.textContent = q;
+      msg.appendChild(qDisplay);
+
+      const answerEl = document.createElement("div");
+      answerEl.className = "answer";
+      answerEl.innerHTML = '<span class="cursor-blink">▍</span>';
+      msg.appendChild(answerEl);
+
+      thread.appendChild(msg);
+      thread.scrollTop = thread.scrollHeight;
+
+      // Clear textarea immediately
+      qEl.value = "";
+      qEl.style.height = "56px";
+
+      setStatus("Searching the web…");
+
+      let streamedText  = "";
+      let citationList  = [];
+      let sourcesInDom  = false;
+      let gotDone       = false;
+      let rafPending    = false;
+
+      try {
+        const res = await apiFetch("/api/ask/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: q,
+            include_files: true,
+            thread_id: activeThreadId,
+            file_ids: fileIds,
+            search_mode: searchMode
+          })
+        });
+        if (!res.ok) throw new Error(await res.text());
+
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split("\n\n");
+          buf = parts.pop(); // last may be incomplete
+
+          for (const block of parts) {
+            if (!block.trim()) continue;
+            const ev = parseSseBlock(block);
+            if (!ev) continue;
+
+            if (ev.event === "meta") {
+              citationList = ev.payload.citations || [];
+              metaEl.textContent = new Date().toLocaleTimeString();
+              setStatus("Generating answer…");
+              // Render sources BEFORE the answer (Perplexity-style)
+              if (citationList.length > 0 && !sourcesInDom) {
+                sourcesInDom = true;
+                const sourcesDiv = buildSourcesEl(citationList, msg.id);
+                // Insert between qDisplay and answerEl
+                msg.insertBefore(sourcesDiv, answerEl);
+              }
+              // Clear placeholder cursor, ready for tokens
+              answerEl.innerHTML = '<span class="cursor-blink">▍</span>';
+
+            } else if (ev.event === "token") {
+              streamedText += ev.payload.delta || "";
+              // Batch DOM updates to animation frames for smooth rendering
+              if (!rafPending) {
+                rafPending = true;
+                requestAnimationFrame(() => {
+                  answerEl.textContent = streamedText + " ▍";
+                  thread.scrollTop = thread.scrollHeight;
+                  rafPending = false;
+                });
+              }
+
+            } else if (ev.event === "done") {
+              gotDone = true;
+              activeThreadId = ev.payload.thread_id;
+              activeChatId   = ev.payload.chat_id;
+              const confidence = parseFloat(ev.payload.confidence || 0);
+
+              // Final markdown render
+              setAnswerContent(answerEl, streamedText, citationList);
+
+              // Confidence badge
+              if (confidence > 0) {
+                msg.insertBefore(makeConfidenceBadge(confidence), answerEl.nextSibling);
+              }
+              addCopyButton(msg, streamedText);
+
+              setFileSelectionStatus(`${selectedFileIds.size} file(s) attached to thread #${activeThreadId}`);
+              setStatus(`Saved to thread #${activeThreadId} (chat #${activeChatId})`);
+              await loadChats();
+              // Highlight active thread in sidebar
+              highlightActiveThread(activeThreadId);
+
+            } else if (ev.event === "final") {
+              // Citation-aligned version arrived — re-render
+              const aligned = ev.payload.answer || "";
+              streamedText = aligned;
+              setAnswerContent(answerEl, aligned, citationList);
+
+            } else if (ev.event === "error") {
+              throw new Error(ev.payload.detail || "Stream error");
+            }
+          }
+        }
+
+        if (!gotDone && streamedText) {
+          // Stream ended without done event — render what we have
+          setAnswerContent(answerEl, streamedText, citationList);
+          addCopyButton(msg, streamedText);
+          setStatus("", false);
+        }
+
+      } catch (err) {
+        answerEl.innerHTML = `<span style="color:var(--error)">Error: ${err.message}</span>`;
+        setStatus("Request failed: " + err.message, true);
+      } finally {
+        if (askBtn) { askBtn.disabled = false; }
+      }
+    }
+
+    /* ── file upload ── */
+    async function upload() {
+      const input = document.getElementById("fileInput");
+      if (!input.files || input.files.length === 0) { setUploadStatus("Choose a file first."); return; }
+      const form = new FormData();
+      form.append("file", input.files[0]);
+      setUploadStatus("Uploading…");
+      try {
+        const res  = await apiFetch("/api/files/upload", { method: "POST", body: form });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text);
+        const data = JSON.parse(text);
+        const jobTxt = data.job_id ? `, job #${data.job_id}` : "";
+        setUploadStatus(`Uploaded: ${data.filename} (#${data.file_id}${jobTxt})`);
+        input.value = "";
+        if (data.file_id) selectedFileIds.add(data.file_id);
+        await loadFiles();
+        await loadJobs();
+        setFileSelectionStatus(
+          activeThreadId === null
+            ? `${selectedFileIds.size} file(s) selected for next new thread`
+            : `${selectedFileIds.size} file(s) attached to thread #${activeThreadId}`
+        );
+      } catch (err) {
+        setUploadStatus("Upload failed: " + err.message, true);
+      }
+    }
+
+    /* ── sidebar helpers ── */
+    function highlightActiveThread(threadId) {
+      document.querySelectorAll("#history button").forEach(btn => {
+        btn.classList.toggle("active-thread", btn.dataset.threadId == threadId);
       });
     }
 
@@ -1025,9 +1231,11 @@
         if (!res.ok) throw new Error(await res.text());
         const chats = await res.json();
         chats.forEach(chat => {
-          const li = document.createElement("li");
+          const li  = document.createElement("li");
           const btn = document.createElement("button");
-          btn.textContent = truncate(chat.query || "(empty)");
+          btn.dataset.threadId = chat.thread_id;
+          btn.textContent = truncate(chat.title || chat.query || "(empty)");
+          if (chat.thread_id == activeThreadId) btn.classList.add("active-thread");
           btn.onclick = () => loadThread(chat.thread_id);
           li.appendChild(btn);
           history.appendChild(li);
@@ -1045,17 +1253,44 @@
         if (!res.ok) throw new Error(await res.text());
         allFiles = await res.json();
         renderFiles();
-      } catch (err) {
-        const fileList = document.getElementById("fileList");
-        fileList.innerHTML = "";
+      } catch (_err) {
+        const fl = document.getElementById("fileList");
+        fl.innerHTML = "";
         const li = document.createElement("li");
         li.textContent = "Failed to load files";
-        fileList.appendChild(li);
+        fl.appendChild(li);
       }
     }
 
+    function renderFiles() {
+      const fileList = document.getElementById("fileList");
+      fileList.innerHTML = "";
+      allFiles.forEach(file => {
+        const li    = document.createElement("li");
+        const label = document.createElement("label");
+        const cb    = document.createElement("input");
+        cb.type    = "checkbox";
+        cb.checked = selectedFileIds.has(file.id);
+        cb.onchange = () => {
+          if (cb.checked) selectedFileIds.add(file.id);
+          else            selectedFileIds.delete(file.id);
+          setFileSelectionStatus(
+            activeThreadId === null
+              ? `${selectedFileIds.size} file(s) selected for next new thread`
+              : `${selectedFileIds.size} file(s) selected for thread #${activeThreadId} (click Save to persist)`
+          );
+        };
+        const text = document.createElement("span");
+        text.textContent = `${file.original_name} (${Math.ceil(file.size_bytes / 1024)} KB)`;
+        label.appendChild(cb);
+        label.appendChild(text);
+        li.appendChild(label);
+        fileList.appendChild(li);
+      });
+    }
+
     async function loadThread(threadId) {
-      setStatus("Loading thread...");
+      setStatus("Loading thread…");
       try {
         const res = await apiFetch(`/api/threads/${threadId}`);
         if (!res.ok) throw new Error(await res.text());
@@ -1066,18 +1301,13 @@
         renderFiles();
         clearThreadEmpty();
         payload.chats.forEach(turn => {
-          renderMessage(
-            turn.query,
-            turn.answer,
-            turn.citations || [],
-            formatTime(turn.created_at)
-          );
+          renderMessage(turn.query, turn.answer, turn.citations || [], formatTime(turn.created_at));
           activeChatId = turn.id;
         });
+        highlightActiveThread(activeThreadId);
         setFileSelectionStatus(`${selectedFileIds.size} file(s) attached to thread #${payload.thread_id}`);
         setStatus(`Loaded thread #${payload.thread_id}`);
-        await loadFollowups(activeChatId);
-      } catch (err) {
+      } catch (_err) {
         setStatus("Failed to load thread", true);
       }
     }
@@ -1090,13 +1320,13 @@
       try {
         const res = await apiFetch(`/api/threads/${activeThreadId}/files`, {
           method: "PUT",
-          headers: {"Content-Type": "application/json"},
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ file_ids: sortedSelectedFileIds() })
         });
         if (!res.ok) throw new Error(await res.text());
-        const payload = await res.json();
+        const p = await res.json();
         selectedFileIds.clear();
-        (payload.file_ids || []).forEach(fid => selectedFileIds.add(fid));
+        (p.file_ids || []).forEach(fid => selectedFileIds.add(fid));
         renderFiles();
         setFileSelectionStatus(`${selectedFileIds.size} file(s) saved to thread #${activeThreadId}`);
       } catch (err) {
@@ -1106,110 +1336,128 @@
 
     function newChat() {
       activeThreadId = null;
-      activeChatId = null;
+      activeChatId   = null;
       selectedFileIds.clear();
       renderFiles();
       clearThread();
       resetComposer();
+      highlightActiveThread(null);
       setFileSelectionStatus("No thread selected. File choices apply to the next ask.");
       setStatus("New chat ready");
     }
 
-    function parseSseBlock(block) {
-      const lines = block.split("\n");
-      let event = "message";
-      let data = "";
-      for (const line of lines) {
-        if (line.startsWith("event:")) {
-          event = line.slice(6).trim();
-        } else if (line.startsWith("data:")) {
-          data += line.slice(5).trim();
-        }
-      }
-      if (!data) return null;
-      try {
-        return { event, payload: JSON.parse(data) };
-      } catch {
-        return null;
-      }
+    async function exportThread() {
+      if (activeThreadId === null) { setStatus("No active thread to export.", true); return; }
+      window.open(`/api/threads/${activeThreadId}/export?format=markdown`, "_blank", "noopener,noreferrer");
     }
 
-    async function ask() {
-      const q = document.getElementById("q").value.trim();
-      if (!q) return;
-      setStatus("Generating answer...");
-      const includeFiles = true;
-      const fileIds = sortedSelectedFileIds();
-      const searchMode = document.getElementById("searchMode").value || "auto";
-
-      if (activeThreadId === null) {
-        clearThreadEmpty();
-      }
-      const rendered = renderMessage(q, "", [], "thinking...");
+    async function purgeAllData() {
+      if (!window.confirm("Delete all chats and uploaded files from this instance?")) return;
+      setStatus("Purging data…");
       try {
-        const res = await apiFetch("/api/ask", {
+        const res = await apiFetch("/api/admin/purge", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({
-            query: q,
-            include_files: includeFiles,
-            thread_id: activeThreadId,
-            file_ids: fileIds,
-            search_mode: searchMode
-          })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: true })
         });
         if (!res.ok) throw new Error(await res.text());
-        const payload = await res.json();
-        const answer = String(payload.answer || "");
-        const citations = payload.citations || [];
-        setAnswerContent(rendered.answerEl, answer, citations);
-        appendSources(rendered.msg, citations);
-        activeThreadId = payload.thread_id;
-        activeChatId = payload.chat_id;
-        setFileSelectionStatus(`${selectedFileIds.size} file(s) attached to thread #${activeThreadId}`);
-        setStatus(`Saved to thread #${payload.thread_id} (chat #${payload.chat_id})`);
-        loadFollowups(activeChatId);
-        document.getElementById("q").value = "";
-        await loadChats();
+        const data = await res.json();
+        activeThreadId = null; activeChatId = null;
+        selectedFileIds.clear(); allFiles = [];
+        resetComposer(); clearThread();
+        await loadChats(); await loadFiles();
+        setFileSelectionStatus("No thread selected. File choices apply to the next ask.");
+        setStatus(`Purged chats=${data.deleted_chat_count}, files=${data.deleted_file_count}, chunks=${data.deleted_chunk_count}`);
       } catch (err) {
-        setStatus("Request failed: " + err.message, true);
+        setStatus("Purge failed: " + err.message, true);
       }
     }
 
-    async function upload() {
-      const input = document.getElementById("fileInput");
-      if (!input.files || input.files.length === 0) {
-        setUploadStatus("Choose a file first.");
-        return;
-      }
-      const form = new FormData();
-      form.append("file", input.files[0]);
-      setUploadStatus("Uploading...");
+    async function loadJobs() {
+      const list = document.getElementById("jobList");
+      list.innerHTML = "";
       try {
-        const res = await apiFetch("/api/files/upload", { method: "POST", body: form });
-        const text = await res.text();
-        if (!res.ok) throw new Error(text);
-        const data = JSON.parse(text);
-        const jobTxt = data.job_id ? `, job #${data.job_id}` : "";
-        setUploadStatus(`Uploaded: ${data.filename} (#${data.file_id}${jobTxt})`);
-        input.value = "";
-        // Auto-select the uploaded file so it's included in the next ask
-        if (data.file_id) {
-          selectedFileIds.add(data.file_id);
+        const res = await apiFetch("/api/jobs?limit=10");
+        if (!res.ok) throw new Error(await res.text());
+        const jobs = await res.json();
+        if (jobs.length === 0) {
+          const li = document.createElement("li"); li.textContent = "No jobs yet"; list.appendChild(li);
+          return;
         }
-        await loadFiles();
-        await loadJobs();
-        // Update status to show file is selected
-        setFileSelectionStatus(
-          activeThreadId === null
-            ? `${selectedFileIds.size} file(s) selected for next new thread`
-            : `${selectedFileIds.size} file(s) attached to thread #${activeThreadId}`
-        );
-      } catch (err) {
-        setUploadStatus("Upload failed: " + err.message, true);
+        jobs.forEach(j => {
+          const li = document.createElement("li");
+          li.textContent = `#${j.id} ${j.job_type} ${j.status} ${Math.round((j.progress || 0) * 100)}%`;
+          list.appendChild(li);
+        });
+      } catch (_err) {
+        const li = document.createElement("li"); li.textContent = "Failed to load jobs"; list.appendChild(li);
       }
     }
 
+    async function loadBackups() {
+      const list = document.getElementById("backupList");
+      list.innerHTML = "";
+      try {
+        const res = await apiFetch("/api/admin/backups");
+        if (!res.ok) throw new Error(await res.text());
+        const backups = await res.json();
+        if (backups.length === 0) {
+          const li = document.createElement("li"); li.textContent = "No backups yet"; list.appendChild(li);
+          return;
+        }
+        backups.forEach(b => {
+          const li   = document.createElement("li");
+          const wrap = document.createElement("div");
+          wrap.style.cssText = "display:flex;gap:6px;align-items:center;";
+          const name = document.createElement("span");
+          name.textContent = `${b.name} (${Math.ceil(b.size_bytes / 1024)} KB)`;
+          const dl = document.createElement("button"); dl.className = "secondary"; dl.textContent = "DL";
+          dl.onclick = () => window.open(`/api/admin/backups/${encodeURIComponent(b.name)}/download`, "_blank");
+          const rs = document.createElement("button"); rs.className = "secondary"; rs.textContent = "Restore";
+          rs.onclick = async () => {
+            if (!window.confirm(`Restore backup ${b.name}? This overwrites current DB.`)) return;
+            const r = await apiFetch(`/api/admin/backups/${encodeURIComponent(b.name)}/restore`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ confirm: true })
+            });
+            if (!r.ok) throw new Error(await r.text());
+            setStatus(`Restored backup ${b.name}. Reloading…`);
+            setTimeout(() => window.location.reload(), 1200);
+          };
+          wrap.append(name, dl, rs);
+          li.appendChild(wrap);
+          list.appendChild(li);
+        });
+      } catch (_err) {
+        const li = document.createElement("li"); li.textContent = "Failed to load backups"; list.appendChild(li);
+      }
+    }
+
+    async function createBackup() {
+      setStatus("Creating backup…");
+      try {
+        const res = await apiFetch("/api/admin/backups/create", { method: "POST" });
+        if (!res.ok) throw new Error(await res.text());
+        const b = await res.json();
+        setStatus(`Backup created: ${b.name}`);
+        await loadBackups();
+      } catch (err) {
+        setStatus("Backup failed: " + err.message, true);
+      }
+    }
+
+    /* ── keyboard shortcut ── */
+    const queryInput = document.getElementById("q");
+    queryInput.addEventListener("input", function () {
+      this.style.height = "auto";
+      this.style.height = (this.scrollHeight) + "px";
+      if (this.value === "") this.style.height = "56px";
+    });
+    queryInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); ask(); }
+    });
+
+    /* ── init ── */
     async function initializeApp() {
       clearThread();
       resetComposer();
@@ -1218,30 +1466,14 @@
       await loadJobs();
       await loadBackups();
       setFileSelectionStatus("No thread selected. File choices apply to the next ask.");
+      setupVoice();
       if (jobsPollTimer === null) {
         jobsPollTimer = setInterval(() => { loadJobs(); }, 5000);
       }
     }
 
-    const queryInput = document.getElementById("q");
-    queryInput.addEventListener("input", function() {
-      this.style.height = "auto";
-      this.style.height = (this.scrollHeight) + "px";
-      if (this.value === "") {
-        this.style.height = "56px";
-      }
-    });
-    queryInput.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" && !ev.shiftKey) {
-        ev.preventDefault();
-        ask();
-      }
-    });
-
     ensureAuth().then((info) => {
-      if (!info.auth_enabled || info.authenticated) {
-        initializeApp();
-      }
+      if (!info.auth_enabled || info.authenticated) initializeApp();
     }).catch(() => {
       setStatus("Initialization failed.", true);
     });
