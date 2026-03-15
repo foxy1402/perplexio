@@ -1157,6 +1157,33 @@
     }
 
     /* ── file upload ── */
+    async function waitForJobReady(jobId, fileId) {
+      const maxWait = 120000; // 2 min
+      const interval = 1500;
+      const start = Date.now();
+      while (Date.now() - start < maxWait) {
+        await new Promise(r => setTimeout(r, interval));
+        try {
+          const res = await apiFetch("/api/jobs?limit=20");
+          if (!res.ok) break;
+          const jobs = await res.json();
+          const job = jobs.find(j => j.id == jobId);
+          if (!job) break;
+          if (job.status === "completed") {
+            setUploadStatus(`✓ File #${fileId} indexed and ready`);
+            return true;
+          }
+          if (job.status === "failed") {
+            setUploadStatus(`⚠ Indexing failed for file #${fileId}`, true);
+            return false;
+          }
+          const pct = Math.round((job.progress || 0) * 100);
+          setUploadStatus(`Indexing… ${pct}%`);
+        } catch (_) { break; }
+      }
+      return false;
+    }
+
     async function upload() {
       const input = document.getElementById("fileInput");
       if (!input.files || input.files.length === 0) { setUploadStatus("Choose a file first."); return; }
@@ -1179,6 +1206,10 @@
             ? `${selectedFileIds.size} file(s) selected for next new thread`
             : `${selectedFileIds.size} file(s) attached to thread #${activeThreadId}`
         );
+        if (data.job_id) {
+          setUploadStatus(`Indexing… 0%`);
+          await waitForJobReady(data.job_id, data.file_id);
+        }
       } catch (err) {
         setUploadStatus("Upload failed: " + err.message, true);
       }

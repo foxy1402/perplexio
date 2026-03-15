@@ -984,8 +984,8 @@ async def prepare_ask(
     context = "\n\n".join(context_parts)
     # #region agent log
     import json as _j, time as _t
-    with open("debug-ebf9dc.log", "a") as _lf:
-        _lf.write(_j.dumps({"sessionId":"ebf9dc","runId":"run1","hypothesisId":"H-A","location":"services.py:prepare_ask","message":"context check","data":{"effective_mode":effective_mode,"effective_file_ids":effective_file_ids,"web_ctx_len":len(web_context),"file_ctx_len":len(file_context),"context_empty":not context},"timestamp":int(_t.time()*1000)}) + "\n")
+    with open("/data/debug-ebf9dc.log", "a") as _lf:
+        _lf.write(_j.dumps({"sessionId":"ebf9dc","runId":"post-fix","hypothesisId":"H-A","location":"services.py:prepare_ask","message":"context check","data":{"effective_mode":effective_mode,"effective_file_ids":effective_file_ids,"web_ctx_len":len(web_context),"file_ctx_len":len(file_context),"context_empty":not context},"timestamp":int(_t.time()*1000)}) + "\n")
     # #endregion
     if not context:
         if effective_mode == "files":
@@ -1039,6 +1039,9 @@ async def align_answer_citations(answer: str, citations: list[Citation]) -> str:
         s = line.strip()
         if not s or marker_re.search(s):
             continue
+        # Skip markdown table rows / separator lines (start with |)
+        if s.startswith("|"):
+            continue
         claims = [
             p.strip()
             for p in sentence_split_re.split(s)
@@ -1084,8 +1087,8 @@ async def align_answer_citations(answer: str, citations: list[Citation]) -> str:
     # #region agent log
     import json as _j, time as _t
     _tbl_lines = [(i, ln) for i, ln in enumerate(lines) if ln.strip().startswith("|")]
-    with open("debug-ebf9dc.log", "a") as _lf:
-        _lf.write(_j.dumps({"sessionId":"ebf9dc","runId":"run1","hypothesisId":"H-C","location":"services.py:align_answer_citations","message":"table rows in answer","data":{"table_line_count":len(_tbl_lines),"table_lines_being_modified":[{"idx":i,"line":ln[:80]} for i,ln in _tbl_lines if i in line_to_refs],"candidate_count":len(candidate_texts)},"timestamp":int(_t.time()*1000)}) + "\n")
+    with open("/data/debug-ebf9dc.log", "a") as _lf:
+        _lf.write(_j.dumps({"sessionId":"ebf9dc","runId":"post-fix","hypothesisId":"H-C","location":"services.py:align_answer_citations","message":"table rows in answer","data":{"table_line_count":len(_tbl_lines),"table_lines_being_modified":[{"idx":i,"line":ln[:80]} for i,ln in _tbl_lines if i in line_to_refs],"candidate_count":len(candidate_texts)},"timestamp":int(_t.time()*1000)}) + "\n")
     # #endregion
     for line_idx, refs in line_to_refs.items():
         refs_sorted = sorted(refs)
@@ -1602,8 +1605,8 @@ async def enrich_file_text(file_id: int) -> str:
     _is_sparse_pdf = mime_type == "application/pdf" and len(existing) < 200
     # #region agent log
     import json as _j, time as _t
-    with open("debug-ebf9dc.log", "a") as _lf:
-        _lf.write(_j.dumps({"sessionId":"ebf9dc","runId":"run1","hypothesisId":"H-B","location":"services.py:enrich_file_text","message":"enrich entry","data":{"file_id":file_id,"mime":mime_type,"existing_len":len(existing),"is_sparse_pdf":_is_sparse_pdf,"will_skip":bool(existing and not _is_sparse_pdf)},"timestamp":int(_t.time()*1000)}) + "\n")
+    with open("/data/debug-ebf9dc.log", "a") as _lf:
+        _lf.write(_j.dumps({"sessionId":"ebf9dc","runId":"post-fix","hypothesisId":"H-B","location":"services.py:enrich_file_text","message":"enrich entry","data":{"file_id":file_id,"mime":mime_type,"existing_len":len(existing),"is_sparse_pdf":_is_sparse_pdf,"will_skip":bool(existing and not _is_sparse_pdf)},"timestamp":int(_t.time()*1000)}) + "\n")
     # #endregion
     if existing and not _is_sparse_pdf:
         return existing
