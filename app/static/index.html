@@ -880,6 +880,12 @@
         wrap.className = "pre-wrapper";
         pre.parentNode.insertBefore(wrap, pre);
         wrap.appendChild(pre);
+        // #region agent log
+        requestAnimationFrame(() => {
+          const msg = wrap.closest(".message");
+          fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'run1',hypothesisId:'H-A+H-B',location:'index.html:pre-wrapper-measure',message:'code block widths',data:{preScrollWidth:pre.scrollWidth,wrapClientWidth:wrap.clientWidth,wrapScrollWidth:wrap.scrollWidth,msgClientWidth:msg?msg.clientWidth:null,mainClientWidth:document.querySelector('.main')?.clientWidth,threadClientWidth:document.querySelector('.thread')?.clientWidth},timestamp:Date.now()})}).catch(()=>{});
+        });
+        // #endregion
         const btn = document.createElement("button");
         btn.className = "pre-copy-btn";
         btn.textContent = "Copy";
