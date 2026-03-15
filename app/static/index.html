@@ -163,8 +163,6 @@
       display: grid;
       grid-template-rows: 1fr auto;
       gap: 20px;
-      max-width: 900px;
-      margin: 0 auto;
       width: 100%;
       overflow-y: auto;
       -ms-overflow-style: none;
@@ -1158,6 +1156,9 @@
 
     /* ── file upload ── */
     async function waitForJobReady(jobId, fileId) {
+      const btn = document.getElementById("askBtn");
+      const origLabel = btn ? btn.textContent : "Ask";
+      if (btn) { btn.disabled = true; btn.textContent = "Indexing…"; }
       const maxWait = 120000; // 2 min
       const interval = 1500;
       const start = Date.now();
@@ -1171,16 +1172,19 @@
           if (!job) break;
           if (job.status === "completed") {
             setUploadStatus(`✓ File #${fileId} indexed and ready`);
+            if (btn) { btn.disabled = false; btn.textContent = origLabel; }
             return true;
           }
           if (job.status === "failed") {
             setUploadStatus(`⚠ Indexing failed for file #${fileId}`, true);
+            if (btn) { btn.disabled = false; btn.textContent = origLabel; }
             return false;
           }
           const pct = Math.round((job.progress || 0) * 100);
           setUploadStatus(`Indexing… ${pct}%`);
         } catch (_) { break; }
       }
+      if (btn) { btn.disabled = false; btn.textContent = origLabel; }
       return false;
     }
 
@@ -1453,7 +1457,11 @@
       if (this.value === "") this.style.height = "56px";
     });
     queryInput.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); ask(); }
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        const btn = document.getElementById("askBtn");
+        if (!btn || !btn.disabled) ask();
+      }
     });
 
     /* ── init ── */
