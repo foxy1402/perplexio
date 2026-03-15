@@ -661,7 +661,7 @@
           <div id="fileSelectionStatus" class="hint"></div>
           <div style="flex:1;"></div>
           <div class="mode-chips" id="modeChips">
-            <button class="mode-chip active" data-mode="auto"   onclick="setMode(this)">Auto</button>
+            <button class="mode-chip active" data-mode="auto"   onclick="setMode(this)" title="Smart: routes to web search or direct LLM answer automatically">Auto</button>
             <button class="mode-chip"        data-mode="web"    onclick="setMode(this)">Web</button>
             <button class="mode-chip"        data-mode="files"  onclick="setMode(this)">Files</button>
             <button class="mode-chip"        data-mode="social" onclick="setMode(this)">Social</button>
@@ -886,11 +886,20 @@
         btn.onclick = async (e) => {
           e.stopPropagation();
           const code = pre.querySelector("code");
+          // #region agent log
+          fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'post-fix',location:'index.html:pre-copy-btn-click',message:'pre-copy clicked',data:{hasClipboardAPI:!!navigator.clipboard,isSecureContext:window.isSecureContext,protocol:location.protocol},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
           try {
-            await navigator.clipboard.writeText(code ? code.textContent : pre.textContent);
+            await copyText(code ? code.textContent : pre.textContent);
             btn.textContent = "✓ Copied";
             setTimeout(() => { btn.textContent = "Copy"; }, 1500);
-          } catch {}
+          } catch(e2) {
+            // #region agent log
+            fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'post-fix',location:'index.html:pre-copy-btn-error',message:'pre-copy error after fallback',data:{errorName:e2?.name,errorMsg:e2?.message,isSecureContext:window.isSecureContext},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+            btn.textContent = "Failed";
+            setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+          }
         };
         wrap.appendChild(btn);
       });
@@ -908,6 +917,26 @@
       return badge;
     }
 
+    /* ── clipboard helper: works on both HTTPS and plain HTTP ── */
+    async function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      // Fallback for HTTP contexts where Clipboard API is unavailable
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none";
+      document.body.appendChild(el);
+      el.focus();
+      el.select();
+      try {
+        if (!document.execCommand("copy")) throw new Error("execCommand returned false");
+      } finally {
+        document.body.removeChild(el);
+      }
+    }
+
     /* ── copy button ── */
     function addCopyButton(msg, rawText) {
       const existing = msg.querySelector(".copy-btn");
@@ -920,8 +949,11 @@
         `<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`;
       btn.title = "Copy answer";
       btn.onclick = async () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'post-fix',location:'index.html:copy-btn-click',message:'copy clicked',data:{hasClipboardAPI:!!navigator.clipboard,isSecureContext:window.isSecureContext,protocol:location.protocol},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         try {
-          await navigator.clipboard.writeText(rawText);
+          await copyText(rawText);
           btn.textContent = "✓ Copied";
           setTimeout(() => {
             btn.innerHTML =
@@ -929,7 +961,13 @@
               `<rect x="9" y="9" width="13" height="13" rx="2"/>` +
               `<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`;
           }, 2000);
-        } catch {}
+        } catch(e) {
+          // #region agent log
+          fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'post-fix',location:'index.html:copy-btn-error',message:'clipboard error after fallback',data:{errorName:e?.name,errorMsg:e?.message,isSecureContext:window.isSecureContext},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
+          btn.textContent = "Copy failed";
+          setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+        }
       };
       msg.appendChild(btn);
     }

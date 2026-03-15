@@ -185,6 +185,44 @@ async def _retry_post(
     raise RuntimeError("Retry loop exited unexpectedly")
 
 
+_LLM_QUERY_PREAMBLES = (
+    "search for:", "search:", "query:", "find:", "look up:", "lookup:",
+    "find information about:", "web search:", "search query:", "keyword:",
+    "keywords:", "google:", "bing:",
+)
+
+
+def _sanitize_search_query(raw: str) -> str:
+    """Strip LLM artifacts from a generated search query so SearxNG gets clean keywords.
+
+    Removes:
+    - Leading list markers (numbers, bullets, dashes)
+    - Surrounding quotes / backticks
+    - LLM preambles ("Search for:", "Query:", etc.)
+    - Markdown bold/italic
+    - Caps length at 80 chars (breaks at last word boundary)
+    """
+    q = str(raw).strip()
+    # Strip leading list markers: "1.", "2)", "- ", "• ", "* "
+    q = re.sub(r"^\d+[\.\)]\s*", "", q)
+    q = re.sub(r"^[-\*\•\·]\s*", "", q)
+    # Strip surrounding quotes / backticks
+    q = q.strip("\"'`")
+    # Strip LLM preambles (case-insensitive)
+    lower_q = q.lower()
+    for prefix in _LLM_QUERY_PREAMBLES:
+        if lower_q.startswith(prefix):
+            q = q[len(prefix):].strip()
+            break
+    # Strip markdown bold/italic
+    q = re.sub(r"\*{1,2}(.*?)\*{1,2}", r"\1", q)
+    # Cap at 80 chars on a word boundary
+    if len(q) > 80:
+        truncated = q[:80].rsplit(" ", 1)
+        q = truncated[0] if len(truncated) > 1 else q[:80]
+    return q.strip()
+
+
 def _parse_json_array(raw: str, fallback: list | None = None) -> list:
     """Parse a JSON array from LLM output, with fallback bracket extraction."""
     text = raw.strip()
@@ -379,8 +417,10 @@ async def rewrite_queries(query: str) -> list[str]:
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
     headers = _llm_headers()
     prompt = (
-        "Rewrite the user query into short web-search queries. "
-        "Return JSON array only, 1 to 3 items, no explanation."
+        "Rewrite the user query into concise web-search keyword phrases (2–8 words each, "
+        "no full sentences, no articles). "
+        "Return a JSON array of strings only — 1 to 3 items. "
+        "No explanation, no numbering, no bullets, no markdown, no surrounding quotes."
     )
     body = {
         "model": OPENAI_MODEL,
@@ -389,6 +429,7 @@ async def rewrite_queries(query: str) -> list[str]:
             {"role": "user", "content": query},
         ],
         "temperature": 0.1,
+        "max_tokens": 120,
     }
     try:
         client = _get_llm_client()
@@ -399,8 +440,8 @@ async def rewrite_queries(query: str) -> list[str]:
         cleaned: list[str] = []
         seen: set[str] = set()
         for item in data:
-            q = str(item).strip()
-            if not q:
+            q = _sanitize_search_query(str(item))
+            if len(q) < 2:
                 continue
             key = q.lower()
             if key in seen:
@@ -434,7 +475,10 @@ async def generate_followup_queries(
         "messages": [
             {
                 "role": "system",
-                "content": "Generate targeted follow-up web queries. Return JSON array only.",
+                "content": (
+                    "Generate targeted follow-up web-search keyword phrases (2–8 words each). "
+                    "Return a JSON array of strings only — no explanation, no bullets, no markdown."
+                ),
             },
             {
                 "role": "user",
@@ -442,6 +486,7 @@ async def generate_followup_queries(
             },
         ],
         "temperature": 0.2,
+        "max_tokens": 120,
     }
     try:
         client = _get_llm_client()
@@ -452,8 +497,8 @@ async def generate_followup_queries(
         out: list[str] = []
         seen: set[str] = set()
         for item in data:
-            s = str(item).strip()
-            if not s:
+            s = _sanitize_search_query(str(item))
+            if len(s) < 2:
                 continue
             k = s.lower()
             if k in seen:
@@ -665,8 +710,22 @@ def build_context(search_results: list[dict[str, Any]]) -> tuple[str, list[Citat
 
 
 _FILE_SYSTEM_PROMPT = (
-    "You are a document-grounded assistant. Use only the uploaded file content provided. "
-    "If information is missing from the files, say so clearly."
+    "You are a helpful assistant. The uploaded file content is your primary source — "
+    "answer from it whenever it is relevant. For questions the files do not fully address "
+    "(such as estimating costs, general facts, or background knowledge), draw on your own "
+    "training knowledge to give a complete, useful answer. Never refuse to answer just "
+    "because the file lacks certain details. "
+    "Do not invent specific figures, quotes, or facts — when estimating, label them clearly "
+    "as estimates (e.g. 'approximately', 'typically around')."
+)
+
+_DIRECT_SYSTEM_PROMPT = (
+    "You are a helpful, honest assistant answering from your training knowledge. "
+    "Be accurate and acknowledge uncertainty when relevant. "
+    "For time-sensitive topics (current prices, recent events, today's date), "
+    "note that your knowledge has a training cutoff and recommend the user verify current data. "
+    "Never fabricate specific statistics, URLs, quotes, or proper nouns you are unsure about. "
+    "When estimating, label estimates clearly (e.g. 'approximately', 'typically', 'as of my training')."
 )
 
 
@@ -677,7 +736,12 @@ def build_llm_messages(
     thread_summary: str | None = None,
     files_only: bool = False,
 ) -> list[dict[str, str]]:
-    system = _FILE_SYSTEM_PROMPT if files_only else SYSTEM_PROMPT
+    if not context:
+        system = _DIRECT_SYSTEM_PROMPT
+    elif files_only:
+        system = _FILE_SYSTEM_PROMPT
+    else:
+        system = SYSTEM_PROMPT
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     if thread_summary:
         messages.append(
@@ -690,14 +754,23 @@ def build_llm_messages(
         messages.append({"role": "user", "content": turn["query"]})
         messages.append({"role": "assistant", "content": turn["answer"]})
     source_label = "Uploaded file content" if files_only else "Context"
-    user_message = (
-        f"Use the {source_label.lower()} below to answer. If uncertain, say so.\n\n"
-        f"{source_label}:\n"
-        f"{context}\n\n"
-        "Question:\n"
-        f"{query}\n\n"
-        "Return a concise answer and cite sources like [1], [2]."
+    preamble = (
+        f"The following {source_label.lower()} is provided for reference. "
+        "Use it as your primary source, and supplement with your own knowledge where needed."
+        if files_only else
+        f"Use the {source_label.lower()} below to answer. If uncertain, say so."
     )
+    if context:
+        user_message = (
+            f"{preamble}\n\n"
+            f"{source_label}:\n"
+            f"{context}\n\n"
+            "Question:\n"
+            f"{query}\n\n"
+            "Return a concise answer and cite sources like [1], [2]."
+        )
+    else:
+        user_message = f"Question:\n{query}"
     messages.append({"role": "user", "content": user_message})
     return messages
 
@@ -877,6 +950,44 @@ async def generate_thread_title(query: str, answer: str) -> str:
         return query[:60]
 
 
+async def classify_needs_search(query: str, thread_history: list[dict]) -> bool:
+    """Returns True if this query needs a web search, False if the LLM can answer directly.
+
+    Makes a single cheap LLM call (max_tokens=5) to route the question.
+    Defaults to True (do search) on any error so accuracy is never sacrificed.
+    """
+    context_hint = ""
+    if thread_history:
+        last = thread_history[-1]
+        context_hint = f"\nConversation context: {last.get('query', '')[:120]}"
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a query router. Decide if the question needs a real-time web search "
+                "or if you can answer accurately from training knowledge alone.\n"
+                "Reply with exactly one word: SEARCH or DIRECT.\n"
+                "Reply SEARCH for: current events, live data, today's date, recent news, "
+                "prices, weather, sports scores, specific websites.\n"
+                "Reply DIRECT for: general knowledge, math, coding, history, science, "
+                "language, how-things-work, estimates, recommendations, travel advice, "
+                "culture, food, opinions, or anything timeless."
+            ),
+        },
+        {"role": "user", "content": f"Question: {query[:400]}{context_hint}"},
+    ]
+    endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
+    headers = _llm_headers()
+    body = {"model": OPENAI_MODEL, "messages": messages, "temperature": 0.0, "max_tokens": 5}
+    try:
+        client = _get_llm_client()
+        resp = await _retry_post(client, endpoint, headers=headers, json=body)
+        raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+        return "DIRECT" not in raw.strip().upper()
+    except Exception:
+        return True  # default to search on error
+
+
 async def ask_model_stream(messages: list[dict[str, str]]) -> AsyncIterator[str]:
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
     headers = _llm_headers()
@@ -957,9 +1068,39 @@ async def prepare_ask(
     # may still be asking general questions while files are attached to the thread.
     # Note: use effective_file_ids (post-normalize) so that file_ids=[] is treated
     # the same as file_ids=None — an empty list means no files were actually attached.
+    # Build history first — the classifier uses it for context.
+    history: list[dict[str, str]] = []
+    summary_text: str | None = None
+    if thread_id is not None:
+        if THREAD_SUMMARY_ENABLED:
+            existing = get_thread_summary(thread_id)
+            summary_text = existing["summary"] if existing else None
+            last_id = existing["summarized_up_to_chat_id"] if existing else 0
+            recent = get_thread_turns_after(thread_id, last_id)
+            history = [{"query": t["query"], "answer": t["answer"]} for t in recent[-THREAD_RECENT_TURNS:]]
+        else:
+            history = get_thread_history(thread_id, THREAD_HISTORY_TURNS)
+
     effective_mode = search_mode
     if search_mode == "auto":
-        effective_mode = "files" if (file_ids is not None and bool(effective_file_ids)) else "all"
+        if file_ids is not None and bool(effective_file_ids):
+            effective_mode = "files"
+        else:
+            # Smart routing: ask the LLM if this question needs a web search.
+            # One cheap classifier call (max_tokens=5) before deciding to search.
+            needs_search = await classify_needs_search(query, history)
+            effective_mode = "all" if needs_search else "direct"
+
+    # "direct" mode: skip all retrieval, answer from LLM training knowledge.
+    if effective_mode == "direct":
+        messages = build_llm_messages(
+            query=query,
+            context="",
+            thread_history=history,
+            thread_summary=summary_text,
+            files_only=False,
+        )
+        return messages, []
 
     web_context = ""
     web_citations: list[Citation] = []
@@ -982,11 +1123,6 @@ async def prepare_ask(
     if file_context:
         context_parts.append("Uploaded files:\n" + file_context)
     context = "\n\n".join(context_parts)
-    # #region agent log
-    import json as _j, time as _t
-    with open("/data/debug-ebf9dc.log", "a") as _lf:
-        _lf.write(_j.dumps({"sessionId":"ebf9dc","runId":"post-fix","hypothesisId":"H-A","location":"services.py:prepare_ask","message":"context check","data":{"effective_mode":effective_mode,"effective_file_ids":effective_file_ids,"web_ctx_len":len(web_context),"file_ctx_len":len(file_context),"context_empty":not context},"timestamp":int(_t.time()*1000)}) + "\n")
-    # #endregion
     if not context:
         if effective_mode == "files":
             raise HTTPException(
@@ -1004,18 +1140,6 @@ async def prepare_ask(
             ),
         )
 
-    history: list[dict[str, str]] = []
-    summary_text: str | None = None
-    if thread_id is not None:
-        if THREAD_SUMMARY_ENABLED:
-            existing = get_thread_summary(thread_id)
-            summary_text = existing["summary"] if existing else None
-            # Get only recent turns (post-summary)
-            last_id = existing["summarized_up_to_chat_id"] if existing else 0
-            recent = get_thread_turns_after(thread_id, last_id)
-            history = [{"query": t["query"], "answer": t["answer"]} for t in recent[-THREAD_RECENT_TURNS:]]
-        else:
-            history = get_thread_history(thread_id, THREAD_HISTORY_TURNS)
     messages = build_llm_messages(
         query=query,
         context=context,
@@ -1084,12 +1208,6 @@ async def align_answer_citations(answer: str, citations: list[Citation]) -> str:
         for ref in chosen:
             if ref not in current:
                 current.append(ref)
-    # #region agent log
-    import json as _j, time as _t
-    _tbl_lines = [(i, ln) for i, ln in enumerate(lines) if ln.strip().startswith("|")]
-    with open("/data/debug-ebf9dc.log", "a") as _lf:
-        _lf.write(_j.dumps({"sessionId":"ebf9dc","runId":"post-fix","hypothesisId":"H-C","location":"services.py:align_answer_citations","message":"table rows in answer","data":{"table_line_count":len(_tbl_lines),"table_lines_being_modified":[{"idx":i,"line":ln[:80]} for i,ln in _tbl_lines if i in line_to_refs],"candidate_count":len(candidate_texts)},"timestamp":int(_t.time()*1000)}) + "\n")
-    # #endregion
     for line_idx, refs in line_to_refs.items():
         refs_sorted = sorted(refs)
         lines[line_idx] = lines[line_idx].rstrip() + " " + " ".join(
@@ -1603,11 +1721,6 @@ async def enrich_file_text(file_id: int) -> str:
     # For PDFs: also try OCR enrichment when the existing text is suspiciously sparse
     # (< 200 chars usually means a scanned/image-based PDF where pypdf found nothing).
     _is_sparse_pdf = mime_type == "application/pdf" and len(existing) < 200
-    # #region agent log
-    import json as _j, time as _t
-    with open("/data/debug-ebf9dc.log", "a") as _lf:
-        _lf.write(_j.dumps({"sessionId":"ebf9dc","runId":"post-fix","hypothesisId":"H-B","location":"services.py:enrich_file_text","message":"enrich entry","data":{"file_id":file_id,"mime":mime_type,"existing_len":len(existing),"is_sparse_pdf":_is_sparse_pdf,"will_skip":bool(existing and not _is_sparse_pdf)},"timestamp":int(_t.time()*1000)}) + "\n")
-    # #endregion
     if existing and not _is_sparse_pdf:
         return existing
 

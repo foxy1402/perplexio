@@ -47,8 +47,9 @@ OPENAI_TIMEOUT_SECONDS = env_float("OPENAI_TIMEOUT_SECONDS", 60.0)
 SYSTEM_PROMPT = env_str(
     "SYSTEM_PROMPT",
     (
-        "You are a search-grounded assistant. Use only provided web snippets. "
-        "If information is missing, state uncertainty clearly."
+        "You are a search-grounded assistant. Answer strictly from the provided web snippets. "
+        "Never invent URLs, statistics, quotes, or specific claims not present in the sources. "
+        "If the snippets do not contain the needed information, say so explicitly rather than guessing."
     ),
 )
 
