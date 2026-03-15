@@ -692,9 +692,16 @@ def _load_cross_encoder():
         return None
 
 
-def build_context(search_results: list[dict[str, Any]]) -> tuple[str, list[Citation]]:
+def build_context(
+    search_results: list[dict[str, Any]], query: str = ""
+) -> tuple[str, list[Citation]]:
     citations: list[Citation] = []
     chunks: list[str] = []
+    today = datetime.now().strftime("%Y-%m-%d")
+    header = f"Today is {today}."
+    if query:
+        header += f" Web search results for '{query}':"
+    chunks.append(header)
     for idx, item in enumerate(search_results, start=1):
         title = str(item.get("title", "")).strip() or f"Result {idx}"
         url = str(item.get("url", "")).strip()
@@ -950,42 +957,156 @@ async def generate_thread_title(query: str, answer: str) -> str:
         return query[:60]
 
 
-async def classify_needs_search(query: str, thread_history: list[dict]) -> bool:
-    """Returns True if this query needs a web search, False if the LLM can answer directly.
+_GREETINGS = frozenset({
+    'hi', 'hello', 'hey', 'hola', 'thanks', 'thank you', 'bye', 'goodbye',
+    'ok', 'okay', 'yes', 'no', 'sure', 'lol', 'haha', 'nice', 'great', 'cool',
+    'good morning', 'good night', 'good evening', 'good afternoon',
+    'ty', 'thx', 'np', 'yw',
+})
 
-    Makes a single cheap LLM call (max_tokens=5) to route the question.
-    Defaults to True (do search) on any error so accuracy is never sacrificed.
+
+def _skip_search_decision(text: str) -> bool:
+    """True for messages that obviously need no web search — skips the LLM router call."""
+    if len(text) < 6:
+        return True
+    return text.lower().rstrip('!?.,: ') in _GREETINGS
+
+
+def _make_search_decision_prompt() -> str:
+    """Build the standalone search-router prompt with today's date injected."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return (
+        f"You are a search router. Decide if the user's latest message needs a "
+        f"live web search to answer accurately. Today's date is {today}.\n\n"
+        "Respond with EXACTLY one line:\n"
+        "  SEARCH: <2-6 word query>   — needs current/real-time info\n"
+        "  NOSEARCH                   — can answer from training knowledge\n\n"
+        "Use SEARCH for: current events, live prices, weather, sports scores, "
+        "recent news, product availability, real-time data, people's current status, "
+        "or any fact you are NOT fully confident about.\n\n"
+        "Use NOSEARCH for: coding help, math, creative writing, definitions, "
+        "explanations, greetings, opinions, general knowledge, or anything "
+        "you can confidently answer from training data.\n\n"
+        "CRITICAL: Output ONLY one line. No explanations. No apologies. "
+        "No extra text after SEARCH: query. Just the decision."
+    )
+
+
+def _parse_search_query(response: str) -> str | None:
+    """Extract a clean search query from the router's SEARCH/NOSEARCH response.
+
+    Returns a clean query string if the router chose SEARCH, or None for NOSEARCH.
+    Handles every known model output failure mode: doubled SEARCH: prefix,
+    inline NOSEARCH bleed-through (Cerebras quirk), surrounding quotes/backticks,
+    markdown bold, and explanatory text after the query.
+    Ported from bot.py lines 149-210.
     """
-    context_hint = ""
-    if thread_history:
-        last = thread_history[-1]
-        context_hint = f"\nConversation context: {last.get('query', '')[:120]}"
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a query router. Decide if the question needs a real-time web search "
-                "or if you can answer accurately from training knowledge alone.\n"
-                "Reply with exactly one word: SEARCH or DIRECT.\n"
-                "Reply SEARCH for: current events, live data, today's date, recent news, "
-                "prices, weather, sports scores, specific websites.\n"
-                "Reply DIRECT for: general knowledge, math, coding, history, science, "
-                "language, how-things-work, estimates, recommendations, travel advice, "
-                "culture, food, opinions, or anything timeless."
-            ),
-        },
-        {"role": "user", "content": f"Question: {query[:400]}{context_hint}"},
+    stripped = response.strip()
+
+    if stripped.upper().startswith("SEARCH:"):
+        raw = stripped[7:].strip().split("\n")[0].strip()
+    else:
+        m = re.search(r"(?i)\bSEARCH:\s*(.+)", stripped)
+        if not m:
+            return None
+        raw = m.group(1).strip().split("\n")[0].strip()
+
+    # Truncate at NOSEARCH if the model appends it on the same line (Cerebras quirk)
+    # Also recover a new SEARCH: query that follows NOSEARCH inline.
+    parts = re.split(r"(?i)NOSEARCH", raw, maxsplit=1)
+    if len(parts) == 2 and re.match(r"(?i)\s*SEARCH:\s*", parts[1]):
+        raw = re.sub(r"(?i)^SEARCH:\s*", "", parts[1]).strip()
+    else:
+        raw = parts[0].strip()
+
+    # Strip repeated SEARCH: prefix (some models double/triple the output).
+    while raw.upper().startswith("SEARCH:"):
+        raw = raw[7:].strip()
+
+    # Truncate at any remaining inline SEARCH: echo.
+    m_echo = re.search(r"(?i)SEARCH:", raw)
+    if m_echo:
+        raw = raw[: m_echo.start()].strip()
+
+    # Strip surrounding quotes/backticks.
+    for q in ('"', "'", "`"):
+        if len(raw) > 2 and raw[0] == q and raw[-1] == q:
+            raw = raw[1:-1].strip()
+
+    # Strip markdown bold/italic.
+    raw = re.sub(r"\*{1,2}(.*?)\*{1,2}", r"\1", raw)
+
+    # Keep only leading valid-query characters.
+    m = re.match(r"^[\w\s\-'\".,/&+%@#()]+", raw, re.UNICODE)
+    raw = m.group(0).strip() if m else ""
+
+    # Hard cap: 10 words / 120 chars.
+    words = raw.split()
+    if len(words) > 10:
+        raw = " ".join(words[:10])
+    raw = raw[:120]
+
+    return raw if len(raw) >= 2 else None
+
+
+async def ai_decide_and_route(
+    query: str,
+    thread_history: list[dict],
+) -> str | None:
+    """Decide whether to search and return the optimised query, or None to answer directly.
+
+    - Skips the LLM call entirely for obvious greetings (_skip_search_decision).
+    - Builds proper role/content history so the router has full multi-turn context.
+    - Uses max_tokens=20 (the response is at most one line).
+    - Retries 3 times with a 1s delay on empty/error responses.
+    - On total failure, searches with the raw user query (optimistic fallback)
+      rather than silently going NOSEARCH.
+    """
+    q = query.strip()
+    if _skip_search_decision(q):
+        return None
+
+    decision_msgs: list[dict] = [
+        {"role": "system", "content": _make_search_decision_prompt()}
     ]
+    for turn in thread_history:
+        decision_msgs.append({"role": "user", "content": turn.get("query", "")})
+        decision_msgs.append({"role": "assistant", "content": turn.get("answer", "")})
+    decision_msgs.append({"role": "user", "content": q})
+
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
     headers = _llm_headers()
-    body = {"model": OPENAI_MODEL, "messages": messages, "temperature": 0.0, "max_tokens": 5}
-    try:
-        client = _get_llm_client()
-        resp = await _retry_post(client, endpoint, headers=headers, json=body)
-        raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
-        return "DIRECT" not in raw.strip().upper()
-    except Exception:
-        return True  # default to search on error
+    body = {
+        "model": OPENAI_MODEL,
+        "messages": decision_msgs,
+        "temperature": 0.0,
+        "max_tokens": 20,
+    }
+
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            client = _get_llm_client()
+            resp = await _retry_post(client, endpoint, headers=headers, json=body)
+            raw = (
+                resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+            )
+            if raw.strip():
+                return _parse_search_query(raw)
+            logger.warning("ai_decide_and_route attempt %d: empty response", attempt)
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("ai_decide_and_route attempt %d failed: %s", attempt, exc)
+        if attempt < 3:
+            await asyncio.sleep(1.0)
+
+    fallback = q[:80].strip()
+    logger.warning(
+        "ai_decide_and_route: all retries failed (%s) — optimistic fallback SEARCH: '%s'",
+        last_exc or "empty response",
+        fallback,
+    )
+    return fallback or None
 
 
 async def ask_model_stream(messages: list[dict[str, str]]) -> AsyncIterator[str]:
@@ -1082,13 +1203,16 @@ async def prepare_ask(
             history = get_thread_history(thread_id, THREAD_HISTORY_TURNS)
 
     effective_mode = search_mode
+    _router_query: str | None = None  # optimised query from the router (auto mode only)
     if search_mode == "auto":
-        if file_ids is not None and bool(effective_file_ids):
-            effective_mode = "files"
+        has_files = file_ids is not None and bool(effective_file_ids)
+        _router_query = await ai_decide_and_route(query, history)
+        needs_search = _router_query is not None
+        if has_files:
+            # Files are attached. If the question also needs a web search (e.g. live
+            # data the file can't have), use hybrid mode so both sources are available.
+            effective_mode = "hybrid" if needs_search else "files"
         else:
-            # Smart routing: ask the LLM if this question needs a web search.
-            # One cheap classifier call (max_tokens=5) before deciding to search.
-            needs_search = await classify_needs_search(query, history)
             effective_mode = "all" if needs_search else "direct"
 
     # "direct" mode: skip all retrieval, answer from LLM training knowledge.
@@ -1104,13 +1228,33 @@ async def prepare_ask(
 
     web_context = ""
     web_citations: list[Citation] = []
-    if effective_mode != "files":
-        search_results = await multi_search_fusion(query, top_k=top_k, search_mode=effective_mode)
-        web_context, web_citations = build_context(search_results)
+    # "hybrid" behaves like "all" for web search (uses "all" SearxNG category).
+    web_search_mode = "all" if effective_mode == "hybrid" else effective_mode
+    if effective_mode not in ("files", "direct"):
+        if _router_query is not None:
+            # Auto-routed: router already produced an optimised query — skip rewrite_queries
+            # and call _fuse_search_queries directly to save one LLM API call.
+            raw_results = await _fuse_search_queries(
+                [_router_query], WEB_FUSION_FETCH_PER_QUERY, web_search_mode
+            )
+            filtered = [
+                x for x in raw_results
+                if float(x.get("_quality_score", 0.0)) >= SOURCE_QUALITY_MIN
+            ]
+            search_results = await rerank_web_results(
+                _router_query, filtered or raw_results, top_k=top_k
+            )
+            web_context, web_citations = build_context(search_results, _router_query)
+        else:
+            # Manual mode (Web/Social/All chips) — full rewrite + RRF as before.
+            search_results = await multi_search_fusion(
+                query, top_k=top_k, search_mode=web_search_mode
+            )
+            web_context, web_citations = build_context(search_results)
 
     file_context = ""
     file_citations: list[Citation] = []
-    if include_files or effective_mode == "files":
+    if include_files or effective_mode in ("files", "hybrid"):
         file_context, file_citations = await retrieve_file_context(
             query=query, file_ids=effective_file_ids
         )
@@ -1124,7 +1268,7 @@ async def prepare_ask(
         context_parts.append("Uploaded files:\n" + file_context)
     context = "\n\n".join(context_parts)
     if not context:
-        if effective_mode == "files":
+        if effective_mode in ("files", "hybrid"):
             raise HTTPException(
                 status_code=404,
                 detail=(
