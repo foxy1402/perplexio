@@ -865,10 +865,9 @@ async def generate_thread_title(query: str, answer: str) -> str:
         client = _get_llm_client()
         resp = await _retry_post(client, endpoint, headers=headers, json=body)
         payload = resp.json()
-        title = str(
-            payload.get("choices", [{}])[0].get("message", {}).get("content", "")
-        ).strip()
-        title = title.strip("\"'")
+        raw = payload.get("choices", [{}])[0].get("message", {}).get("content")
+        # Guard: str(None) == "None" which is truthy but wrong.
+        title = str(raw).strip().strip("\"'") if raw else ""
         return title[:80] if title else query[:60]
     except Exception:
         return query[:60]

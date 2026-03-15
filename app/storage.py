@@ -516,6 +516,8 @@ def list_file_chunks(file_ids: list[int] | None, limit: int) -> list[dict]:
         elif not file_ids:
             rows = []
         else:
+            # No LIMIT when specific files are requested — every chunk must be
+            # scored so that the beginning of a large PDF is not silently cut off.
             placeholders = ",".join("?" for _ in file_ids)
             rows = conn.execute(
                 f"""
@@ -523,10 +525,9 @@ def list_file_chunks(file_ids: list[int] | None, limit: int) -> list[dict]:
                 FROM file_chunks c
                 JOIN files f ON f.id = c.file_id
                 WHERE c.file_id IN ({placeholders})
-                ORDER BY c.id DESC
-                LIMIT ?
+                ORDER BY c.chunk_index ASC
                 """,
-                (*file_ids, safe_limit),
+                tuple(file_ids),
             ).fetchall()
     return [
         {
