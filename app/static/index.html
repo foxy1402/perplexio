@@ -209,8 +209,9 @@
       padding: 12px;
       border-radius: 8px;
       border: 1px solid var(--line);
-      overflow-x: auto;
+      overflow-x: visible;
       margin: 12px 0;
+      min-width: 0;
     }
     .answer code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -362,10 +363,10 @@
       from { opacity: 0; transform: translateY(8px); }
       to   { opacity: 1; transform: translateY(0); }
     }
-    .message { animation: msgIn 0.22s ease; }
+    .message { animation: msgIn 0.22s ease; min-width: 0; overflow: hidden; }
     .message + .message { border-top: 1px solid var(--line); padding-top: 24px; }
     /* Code block copy button */
-    .pre-wrapper { position: relative; }
+    .pre-wrapper { position: relative; overflow-x: auto; }
     .pre-copy-btn {
       position: absolute;
       top: 8px;
@@ -880,29 +881,17 @@
         wrap.className = "pre-wrapper";
         pre.parentNode.insertBefore(wrap, pre);
         wrap.appendChild(pre);
-        // #region agent log
-        requestAnimationFrame(() => {
-          const msg = wrap.closest(".message");
-          fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'run1',hypothesisId:'H-A+H-B',location:'index.html:pre-wrapper-measure',message:'code block widths',data:{preScrollWidth:pre.scrollWidth,wrapClientWidth:wrap.clientWidth,wrapScrollWidth:wrap.scrollWidth,msgClientWidth:msg?msg.clientWidth:null,mainClientWidth:document.querySelector('.main')?.clientWidth,threadClientWidth:document.querySelector('.thread')?.clientWidth},timestamp:Date.now()})}).catch(()=>{});
-        });
-        // #endregion
         const btn = document.createElement("button");
         btn.className = "pre-copy-btn";
         btn.textContent = "Copy";
         btn.onclick = async (e) => {
           e.stopPropagation();
           const code = pre.querySelector("code");
-          // #region agent log
-          fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'post-fix',location:'index.html:pre-copy-btn-click',message:'pre-copy clicked',data:{hasClipboardAPI:!!navigator.clipboard,isSecureContext:window.isSecureContext,protocol:location.protocol},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
           try {
             await copyText(code ? code.textContent : pre.textContent);
             btn.textContent = "✓ Copied";
             setTimeout(() => { btn.textContent = "Copy"; }, 1500);
           } catch(e2) {
-            // #region agent log
-            fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'post-fix',location:'index.html:pre-copy-btn-error',message:'pre-copy error after fallback',data:{errorName:e2?.name,errorMsg:e2?.message,isSecureContext:window.isSecureContext},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
             btn.textContent = "Failed";
             setTimeout(() => { btn.textContent = "Copy"; }, 1500);
           }
@@ -955,9 +944,6 @@
         `<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`;
       btn.title = "Copy answer";
       btn.onclick = async () => {
-        // #region agent log
-        fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'post-fix',location:'index.html:copy-btn-click',message:'copy clicked',data:{hasClipboardAPI:!!navigator.clipboard,isSecureContext:window.isSecureContext,protocol:location.protocol},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         try {
           await copyText(rawText);
           btn.textContent = "✓ Copied";
@@ -968,9 +954,6 @@
               `<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`;
           }, 2000);
         } catch(e) {
-          // #region agent log
-          fetch('http://127.0.0.1:7788/ingest/6f6db4a1-5800-4cc8-83b9-49038342ebff',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ebf9dc'},body:JSON.stringify({sessionId:'ebf9dc',runId:'post-fix',location:'index.html:copy-btn-error',message:'clipboard error after fallback',data:{errorName:e?.name,errorMsg:e?.message,isSecureContext:window.isSecureContext},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
           btn.textContent = "Copy failed";
           setTimeout(() => { btn.textContent = "Copy"; }, 2000);
         }
