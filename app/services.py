@@ -28,6 +28,10 @@ from app.settings import (
     MAX_FILE_CONTEXT_CHARS,
     OCR_ENABLED,
     OCR_LANGUAGE,
+    OCR_VISION_ENABLED,
+    VISION_MODEL,
+    VISION_BASE_URL,
+    VISION_API_KEY,
     FILE_VECTOR_CANDIDATE_LIMIT,
     FILE_VECTOR_TOP_K,
     OPENAI_API_KEY,
@@ -1273,12 +1277,97 @@ async def retrieve_file_context(
     return "\n\n".join(chunks), citations
 
 
+async def _ocr_with_vision_llm(file_path: str, mime_type: str) -> str:
+    """Extract text from an image using the vision-capable LLM.
+
+    Works for any language, font, or layout — no language pack required.
+    Returns raw extracted text (without a [IMAGE OCR] prefix).
+    """
+    import base64
+
+    p = Path(file_path)
+    try:
+        image_bytes = p.read_bytes()
+    except Exception:
+        return ""
+
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    # Normalise MIME to one the OpenAI vision API accepts.
+    _MIME_ALIASES: dict[str, str] = {
+        "image/jpg": "image/jpeg",
+        "image/tif": "image/png",
+        "image/tiff": "image/png",
+        "image/bmp": "image/png",
+    }
+    safe_mime = _MIME_ALIASES.get(mime_type, mime_type)
+    if safe_mime not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
+        ext_map = {
+            ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
+        }
+        safe_mime = ext_map.get(p.suffix.lower(), "image/jpeg")
+
+    model = VISION_MODEL or OPENAI_MODEL
+    base_url = (VISION_BASE_URL or OPENAI_BASE_URL).rstrip("/")
+    endpoint = f"{base_url}/chat/completions"
+    api_key = VISION_API_KEY or OPENAI_API_KEY
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    body = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Extract ALL text from this image exactly as it appears. "
+                            "Preserve the original language and formatting. "
+                            "Output only the extracted text, no commentary."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{safe_mime};base64,{image_b64}"},
+                    },
+                ],
+            }
+        ],
+        "max_tokens": 2048,
+        "temperature": 0.0,
+    }
+    try:
+        client = _get_llm_client()
+        resp = await _retry_post(client, endpoint, headers=headers, json=body)
+        payload = resp.json()
+        text = str(
+            payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+        ).strip()
+        return text
+    except Exception as exc:
+        logger.warning("Vision LLM OCR failed for %s: %s", file_path, exc)
+        return ""
+
+
 async def transcribe_image_with_vision(file_path: str, mime_type: str) -> str:
     if not OCR_ENABLED:
         return ""
     p = Path(file_path)
     if not p.exists():
         return ""
+
+    # Vision LLM path — language-agnostic, handles any font or script.
+    if OCR_VISION_ENABLED:
+        text = await _ocr_with_vision_llm(file_path, mime_type)
+        if text:
+            return f"[IMAGE OCR]\n{text}"
+        logger.warning("Vision LLM OCR returned empty for %s; falling back to Tesseract", file_path)
+
+    # Tesseract fallback — set OCR_LANGUAGE env var for non-English scripts
+    # (e.g. "vie" for Vietnamese, "rus" for Russian, "vie+eng" for mixed).
     if shutil.which("tesseract") is None:
         return ""
     cmd = ["tesseract", str(p), "stdout"]
@@ -1291,7 +1380,6 @@ async def transcribe_image_with_vision(file_path: str, mime_type: str) -> str:
     text = (completed.stdout or "").strip()
     if not text:
         return ""
-    # Keep a lightweight modality marker for retrieval context.
     return f"[IMAGE OCR]\n{text}"
 
 
@@ -1425,19 +1513,90 @@ def extract_audio_from_video(video_path: str) -> str | None:
     return out_path
 
 
+async def _ocr_scanned_pdf(file_path: str) -> str:
+    """Convert a scanned (image-based) PDF to page images and OCR each page.
+
+    Tries three converters in order: pdf2image (Python), pdftoppm (poppler-utils),
+    mutool (mupdf-tools). Falls back gracefully if none is available.
+    """
+    p = Path(file_path)
+    page_texts: list[str] = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_p = Path(tmp)
+        page_images: list[Path] = []
+
+        # Option 1: pdf2image Python package (pip install pdf2image; needs poppler)
+        try:
+            from pdf2image import convert_from_path  # type: ignore
+            images = convert_from_path(str(p), dpi=200, fmt="png")
+            for i, img in enumerate(images):
+                img_path = tmp_p / f"page_{i:03d}.png"
+                img.save(str(img_path), "PNG")
+                page_images.append(img_path)
+        except Exception:
+            pass
+
+        # Option 2: pdftoppm system binary (poppler-utils)
+        if not page_images and shutil.which("pdftoppm"):
+            result = subprocess.run(
+                ["pdftoppm", "-png", "-r", "200", str(p), str(tmp_p / "page")],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                page_images = sorted(tmp_p.glob("page-*.png"))
+
+        # Option 3: mutool system binary (mupdf-tools)
+        if not page_images and shutil.which("mutool"):
+            result = subprocess.run(
+                ["mutool", "draw", "-o", str(tmp_p / "page_%d.png"), str(p)],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                page_images = sorted(tmp_p.glob("page_*.png"))
+
+        if not page_images:
+            logger.warning(
+                "File %s looks like a scanned PDF but no PDF-to-image tool is available. "
+                "Install one of: `pip install pdf2image` (needs poppler), poppler-utils, or mupdf-tools.",
+                file_path,
+            )
+            return ""
+
+        for img_path in page_images:
+            if OCR_VISION_ENABLED:
+                text = await _ocr_with_vision_llm(str(img_path), "image/png")
+            else:
+                raw = await transcribe_image_with_vision(str(img_path), "image/png")
+                prefix = "[IMAGE OCR]\n"
+                text = raw[len(prefix):].strip() if raw.startswith(prefix) else raw
+            if text:
+                page_texts.append(text)
+
+    if not page_texts:
+        return ""
+    return "[SCANNED PDF OCR]\n" + "\n\n--- Page Break ---\n\n".join(page_texts)
+
+
 async def enrich_file_text(file_id: int) -> str:
     row = get_file_record(file_id)
     if not row:
         return ""
     existing = str(row["extracted_text"]).strip()
-    if existing:
-        return existing
     mime_type = str(row["mime_type"])
     file_path = str(row["path"])
+
+    # For PDFs: also try OCR enrichment when the existing text is suspiciously sparse
+    # (< 200 chars usually means a scanned/image-based PDF where pypdf found nothing).
+    _is_sparse_pdf = mime_type == "application/pdf" and len(existing) < 200
+    if existing and not _is_sparse_pdf:
+        return existing
 
     extracted = ""
     if mime_type.startswith("image/"):
         extracted = await transcribe_image_with_vision(file_path, mime_type)
+    elif mime_type == "application/pdf":
+        extracted = await _ocr_scanned_pdf(file_path)
     elif mime_type.startswith("audio/"):
         extracted = await transcribe_audio_file(file_path)
     elif mime_type.startswith("video/"):

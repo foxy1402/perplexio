@@ -72,7 +72,7 @@ EMBEDDING_MODEL = env_str("EMBEDDING_MODEL", "text-embedding-3-small")
 EMBEDDING_TIMEOUT_SECONDS = env_float("EMBEDDING_TIMEOUT_SECONDS", 60.0)
 FILE_CHUNK_SIZE_CHARS = env_int("FILE_CHUNK_SIZE_CHARS", 1200)
 FILE_CHUNK_OVERLAP_CHARS = env_int("FILE_CHUNK_OVERLAP_CHARS", 200)
-FILE_VECTOR_TOP_K = env_int("FILE_VECTOR_TOP_K", 6)
+FILE_VECTOR_TOP_K = env_int("FILE_VECTOR_TOP_K", 10)
 FILE_VECTOR_CANDIDATE_LIMIT = env_int("FILE_VECTOR_CANDIDATE_LIMIT", 200)
 QUERY_REWRITE_COUNT = env_int("QUERY_REWRITE_COUNT", 3)
 WEB_FUSION_FETCH_PER_QUERY = env_int("WEB_FUSION_FETCH_PER_QUERY", 8)
@@ -93,10 +93,20 @@ AUTH_COOKIE_SECURE = env_int("AUTH_COOKIE_SECURE", 0) == 1
 
 OCR_ENABLED = env_int("OCR_ENABLED", 1) == 1
 OCR_LANGUAGE = env_str("OCR_LANGUAGE", "eng")
+# Vision LLM OCR: set OCR_VISION_ENABLED=1 to use the vision-capable LLM for image text
+# extraction (works for any language/font). Falls back to Tesseract when disabled or failed.
+# Set VISION_MODEL to a vision-capable model name (e.g. gpt-4o-mini, llava) if different
+# from the main OPENAI_MODEL.
+OCR_VISION_ENABLED = env_int("OCR_VISION_ENABLED", 0) == 1
+VISION_MODEL = env_str("VISION_MODEL", "")        # empty → inherits OPENAI_MODEL at runtime
+VISION_BASE_URL = env_str("VISION_BASE_URL", "")  # empty → inherits OPENAI_BASE_URL at runtime
+VISION_API_KEY = env_str("VISION_API_KEY", "")    # empty → inherits OPENAI_API_KEY at runtime
 TRANSCRIPTION_ENABLED = env_int("TRANSCRIPTION_ENABLED", 1) == 1
 TRANSCRIPTION_ENGINE = env_str("TRANSCRIPTION_ENGINE", "auto")
 TRANSCRIPTION_MODEL = env_str("TRANSCRIPTION_MODEL", "base")
-TRANSCRIPTION_LANGUAGE = env_str("TRANSCRIPTION_LANGUAGE", "en")
+# "auto" lets Whisper detect the spoken language automatically (supports 99 languages).
+# Override with a specific language code (e.g. "vi", "ru", "tr") to skip detection.
+TRANSCRIPTION_LANGUAGE = env_str("TRANSCRIPTION_LANGUAGE", "auto")
 WHISPER_CPP_BIN = env_str("WHISPER_CPP_BIN", "")
 WHISPER_CPP_MODEL = env_str("WHISPER_CPP_MODEL", "")
 
@@ -115,4 +125,4 @@ ASK_CACHE_MAX_ITEMS = env_int("ASK_CACHE_MAX_ITEMS", 300)
 LLM_RETRY_MAX_ATTEMPTS = env_int("LLM_RETRY_MAX_ATTEMPTS", 3)
 LLM_RETRY_BASE_DELAY = env_float("LLM_RETRY_BASE_DELAY", 2.0)
 LLM_RETRY_BACKOFF_FACTOR = env_float("LLM_RETRY_BACKOFF_FACTOR", 2.0)
-LLM_MAX_TOKENS = env_int("LLM_MAX_TOKENS", 1024)
+LLM_MAX_TOKENS = env_int("LLM_MAX_TOKENS", 2048)

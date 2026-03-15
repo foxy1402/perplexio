@@ -92,7 +92,8 @@ See `.env.example` for full tuning options:
 | **Rerank / citations** | `RERANK_BLEND_ALPHA`, `RERANK_USE_CROSS_ENCODER`, `CROSS_ENCODER_MODEL`, `CITATION_ALIGN_MIN_SCORE`, `SOURCE_QUALITY_MIN`, `CONFIDENCE_ABSTAIN_THRESHOLD` |
 | **File retrieval** | `FILE_CHUNK_SIZE_CHARS`, `FILE_CHUNK_OVERLAP_CHARS`, `FILE_VECTOR_TOP_K`, `FILE_CONTEXT_FILE_COUNT`, `MAX_FILE_CONTEXT_CHARS` |
 | **Thread memory** | `THREAD_HISTORY_TURNS`, `THREAD_SUMMARY_ENABLED`, `THREAD_SUMMARY_INTERVAL`, `THREAD_RECENT_TURNS`, `THREAD_SUMMARY_MAX_TOKENS` |
-| **OCR / transcription** | `OCR_ENABLED`, `OCR_LANGUAGE`, `TRANSCRIPTION_ENABLED`, `TRANSCRIPTION_ENGINE`, `TRANSCRIPTION_MODEL`, `TRANSCRIPTION_LANGUAGE`, `WHISPER_CPP_BIN`, `WHISPER_CPP_MODEL` |
+| **OCR / Vision** | `OCR_ENABLED`, `OCR_LANGUAGE`, `OCR_VISION_ENABLED`, `VISION_MODEL`, `VISION_BASE_URL`, `VISION_API_KEY` |
+| **Transcription** | `TRANSCRIPTION_ENABLED`, `TRANSCRIPTION_ENGINE`, `TRANSCRIPTION_MODEL`, `TRANSCRIPTION_LANGUAGE`, `WHISPER_CPP_BIN`, `WHISPER_CPP_MODEL` |
 | **Embeddings** | `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY`, `EMBEDDING_MODEL`, `EMBEDDING_TIMEOUT_SECONDS` |
 | **Auth / session** | `AUTH_COOKIE_NAME`, `AUTH_SESSION_MAX_AGE_SECONDS`, `AUTH_SESSION_SECRET`, `AUTH_COOKIE_SECURE` |
 | **LLM** | `LLM_MAX_TOKENS`, `OPENAI_TIMEOUT_SECONDS` |
@@ -260,8 +261,8 @@ Upload accepts any file type and stores it persistently.
 
 Text extraction into LLM context currently supports:
 - text files (`text/*`)
-- PDF (`application/pdf`)
-- images (`image/*`) via OCR when `OCR_ENABLED=1`
+- PDF (`application/pdf`) — digital PDFs via `pypdf`; scanned PDFs via Vision LLM or Tesseract OCR
+- images (`image/*`) — via Vision LLM (`OCR_VISION_ENABLED=1`) or Tesseract (`OCR_ENABLED=1`)
 - audio/video (`audio/*`, `video/*`) via transcription when `TRANSCRIPTION_ENABLED=1`
 
 ## 6. Vector Retrieval For Uploaded Files
@@ -283,15 +284,49 @@ Text extraction into LLM context currently supports:
 
 ## 7. OCR / Transcription Pipeline
 
-- Image files (`image/*`): local OCR via `tesseract`.
-- Audio files (`audio/*`): local transcription via `faster-whisper` (default), `whisper` CLI, or `whisper.cpp`.
-- Video files (`video/*`): audio extracted with `ffmpeg`, then locally transcribed.
-- Reindex endpoint can backfill text+embeddings for already uploaded files.
-- Structured text extraction includes better handling for JSON/CSV/Markdown inputs.
+### Image OCR
 
-Language configuration:
-- OCR: `OCR_LANGUAGE=auto` (default behavior), single language (`eng`), or multi-language (`eng+ind` or `eng,ind`).
-- Transcription: `TRANSCRIPTION_LANGUAGE=auto` for auto-detection, or set a specific language code (`en`, `id`, etc.).
+Two paths — Vision LLM (recommended) and Tesseract (local fallback):
+
+**Vision LLM OCR** — works for any language, any font, no language packs needed:
+```env
+OCR_VISION_ENABLED=1
+VISION_MODEL=google/gemma-3-27b-it   # any vision-capable model on your provider
+# VISION_BASE_URL defaults to OPENAI_BASE_URL (no change needed for NVIDIA users)
+# VISION_API_KEY  defaults to OPENAI_API_KEY  (no change needed for NVIDIA users)
+```
+
+**Tesseract fallback** — used when `OCR_VISION_ENABLED=0` or vision returns empty:
+```env
+OCR_ENABLED=1
+OCR_LANGUAGE=eng        # single: "eng", "vie", "rus" — multi: "eng+vie"
+```
+
+### PDF files
+
+- **Digital PDFs** (text layer present): text extracted automatically by `pypdf` — no OCR needed.
+- **Scanned PDFs** (image-only): pages are converted to images, then OCR'd via the same pipeline above. Requires one of: `pdf2image` Python package, `pdftoppm` (poppler-utils), or `mutool` (mupdf-tools).
+
+### Audio transcription
+
+- `audio/*` files: transcribed via `faster-whisper` (default), `whisper` CLI, or `whisper.cpp`.
+- `TRANSCRIPTION_LANGUAGE=auto` (default) — Whisper auto-detects the spoken language (supports 99 languages). Override with a specific code (`vi`, `ru`, `tr`, `en`, etc.) to skip detection.
+
+```env
+TRANSCRIPTION_ENABLED=1
+TRANSCRIPTION_LANGUAGE=auto    # auto-detect language (default)
+TRANSCRIPTION_MODEL=base       # Whisper model size: tiny / base / small / medium / large
+TRANSCRIPTION_ENGINE=auto      # auto / faster_whisper / whisper_cli / whisper_cpp
+```
+
+### Video transcription
+
+- `video/*` files: audio is extracted with `ffmpeg`, then transcribed using the audio pipeline above.
+
+### Reindex
+
+- Reindex endpoint can backfill text + embeddings for already-uploaded files: `POST /api/admin/reindex`
+- Structured text extraction includes special handling for JSON, CSV, and Markdown inputs.
 
 ## 7.5 Async Processing
 
@@ -299,12 +334,11 @@ Language configuration:
 - Reindex can run as background job (`/api/admin/reindex/start`).
 - Poll job progress via `/api/jobs/{job_id}`.
 
-Required binaries for full local pipeline:
-- `tesseract` (for OCR)
-- `ffmpeg` (for video/audio extraction)
-- optional alternatives to built-in `faster-whisper`:
-  - `whisper` CLI (OpenAI whisper python package CLI)
-  - `whisper.cpp` binary + model file
+Required system binaries (only for local/fallback paths):
+- `ffmpeg` — video audio extraction (always needed for video files)
+- `tesseract` — local OCR fallback (optional if `OCR_VISION_ENABLED=1`)
+- `pdftoppm` / `mutool` — scanned PDF page conversion (optional, one of these needed for scanned PDFs)
+- `whisper` CLI or `whisper.cpp` binary — optional alternatives to `faster-whisper`
 
 ## 8. Password Auth
 
