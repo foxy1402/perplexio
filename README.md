@@ -47,6 +47,10 @@ EMBEDDING_BASE_URL=https://integrate.api.nvidia.com/v1
 EMBEDDING_MODEL=nvidia/nv-embedcode-7b-v1
 EMBEDDING_API_KEY=your-api-key
 
+# Vision LLM OCR — works for any language (Vietnamese, Russian, etc.)
+OCR_VISION_ENABLED=1
+VISION_MODEL=google/gemma-3-27b-it
+
 # Optional but recommended for personal deployment
 AUTH_PASSWORD=change_me
 DATA_DIR=/data
