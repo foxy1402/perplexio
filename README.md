@@ -35,8 +35,8 @@ You only need a small set of env vars to run the app.
 
 ```env
 # Required for LLM
-OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
-OPENAI_MODEL=openai/gpt-oss-120b
+OPENAI_BASE_URL=https://gen.pollinations.ai/v1
+OPENAI_MODEL=qwen-safety
 OPENAI_API_KEY=your-api-key
 
 # Required for web search (your own SearxNG instance)
@@ -49,7 +49,7 @@ EMBEDDING_API_KEY=your-api-key
 
 # Vision LLM OCR — works for any language (Vietnamese, Russian, etc.)
 OCR_VISION_ENABLED=1
-VISION_MODEL=google/gemma-3-27b-it
+VISION_MODEL=gemini-fast
 
 # Optional but recommended for personal deployment
 AUTH_PASSWORD=change_me
@@ -295,9 +295,9 @@ Two paths — Vision LLM (recommended) and Tesseract (local fallback):
 **Vision LLM OCR** — works for any language, any font, no language packs needed:
 ```env
 OCR_VISION_ENABLED=1
-VISION_MODEL=google/gemma-3-27b-it   # any vision-capable model on your provider
-# VISION_BASE_URL defaults to OPENAI_BASE_URL (no change needed for NVIDIA users)
-# VISION_API_KEY  defaults to OPENAI_API_KEY  (no change needed for NVIDIA users)
+VISION_MODEL=gemini-fast   # any vision-capable model on your provider
+# VISION_BASE_URL defaults to OPENAI_BASE_URL 
+# VISION_API_KEY  defaults to OPENAI_API_KEY  
 ```
 
 **Tesseract fallback** — used when `OCR_VISION_ENABLED=0` or vision returns empty:
