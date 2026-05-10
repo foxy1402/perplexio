@@ -59,9 +59,7 @@ from app.models import (
 from app.pwa_assets import manifest_json, service_worker_js
 from app.services import (
     admin_reindex_files,
-    align_answer_citations,
     compress_thread_summary,
-    compute_answer_confidence,
     ask_model,
     ask_model_stream,
     generate_thread_title,
@@ -75,7 +73,6 @@ from app.services import (
     start_reindex_job,
     suggest_followups,
 )
-from app.settings import SEARXNG_RESULT_COUNT
 from app.settings import ASK_CACHE_MAX_ITEMS, ASK_CACHE_TTL_SECONDS
 from app.storage import (
     create_persistent_backup,
@@ -514,8 +511,8 @@ async def ask(payload: AskRequest, background_tasks: BackgroundTasks) -> AskResp
         if cached is not None:
             return AskResponse(**cached)
 
-    top_k = payload.top_k or SEARXNG_RESULT_COUNT
-    messages, citations = await prepare_ask(
+    top_k = payload.top_k or 6
+    messages, file_citations, effective_mode = await prepare_ask(
         query=payload.query,
         top_k=top_k,
         include_files=payload.include_files,
@@ -523,14 +520,8 @@ async def ask(payload: AskRequest, background_tasks: BackgroundTasks) -> AskResp
         file_ids=validated_file_ids,
         search_mode=payload.search_mode,
     )
-    raw_answer = await ask_model(messages)
-    answer = await align_answer_citations(raw_answer, citations)
-    confidence, abstain = compute_answer_confidence(answer, citations)
-    if abstain:
-        answer = (
-            "Evidence is limited or conflicting. Treat this as uncertain and verify sources.\n\n"
-            + answer
-        )
+    answer, web_citations = await ask_model(messages, search_mode=effective_mode)
+    citations = file_citations + web_citations
     chat_id, thread_id = save_chat(
         payload.query, answer, citations, thread_id=payload.thread_id
     )
@@ -541,7 +532,6 @@ async def ask(payload: AskRequest, background_tasks: BackgroundTasks) -> AskResp
         citations=citations,
         chat_id=chat_id,
         thread_id=thread_id,
-        confidence=confidence,
     )
     if cache_key:
         async with _CACHE_LOCK:
@@ -568,18 +558,11 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
             cached_citations = cached.get("citations", [])
             cached_chat_id = int(cached.get("chat_id", 0))
             cached_thread_id = int(cached.get("thread_id", 0))
-            cached_confidence = float(cached.get("confidence", 0.0))
 
             async def cached_stream():
-                yield f"event: meta\ndata: {json.dumps({'citations': cached_citations}, ensure_ascii=True)}\n\n".encode(
-                    "utf-8"
-                )
-                yield f"event: token\ndata: {json.dumps({'delta': cached_answer}, ensure_ascii=True)}\n\n".encode(
-                    "utf-8"
-                )
-                yield f"event: done\ndata: {json.dumps({'chat_id': cached_chat_id, 'thread_id': cached_thread_id, 'confidence': cached_confidence}, ensure_ascii=True)}\n\n".encode(
-                    "utf-8"
-                )
+                yield f"event: meta\ndata: {json.dumps({'citations': cached_citations}, ensure_ascii=True)}\n\n".encode("utf-8")
+                yield f"event: token\ndata: {json.dumps({'delta': cached_answer}, ensure_ascii=True)}\n\n".encode("utf-8")
+                yield f"event: done\ndata: {json.dumps({'chat_id': cached_chat_id, 'thread_id': cached_thread_id}, ensure_ascii=True)}\n\n".encode("utf-8")
 
             return StreamingResponse(
                 cached_stream(),
@@ -587,8 +570,8 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
             )
 
-    top_k = payload.top_k or SEARXNG_RESULT_COUNT
-    messages, citations = await prepare_ask(
+    top_k = payload.top_k or 6
+    messages, file_citations, effective_mode = await prepare_ask(
         query=payload.query,
         top_k=top_k,
         include_files=payload.include_files,
@@ -599,31 +582,30 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
 
     async def event_stream() -> AsyncIterator[bytes]:
         all_text: list[str] = []
-        meta = {"citations": [c.model_dump() for c in citations]}
-        yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=True)}\n\n".encode(
-            "utf-8"
-        )
+        web_citations: list = []
+        # Emit file citations immediately so the UI can render source cards.
+        meta = {"citations": [c.model_dump() for c in file_citations]}
+        yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=True)}\n\n".encode("utf-8")
         try:
-            async for token in ask_model_stream(messages):
+            async for token in ask_model_stream(messages, search_mode=effective_mode):
+                if isinstance(token, list):
+                    # Citations sentinel from Sonar's final SSE chunk.
+                    web_citations = token
+                    continue
                 all_text.append(token)
-                payload_token = {"delta": token}
-                yield (
-                    f"event: token\ndata: {json.dumps(payload_token, ensure_ascii=True)}\n\n".encode(
-                        "utf-8"
-                    )
-                )
+                yield f"event: token\ndata: {json.dumps({'delta': token}, ensure_ascii=True)}\n\n".encode("utf-8")
+
             answer = "".join(all_text).strip()
             if not answer:
                 raise RuntimeError("LLM returned empty stream content.")
-            aligned_answer = await align_answer_citations(answer, citations)
-            confidence, abstain = compute_answer_confidence(aligned_answer, citations)
-            if abstain:
-                aligned_answer = (
-                    "Evidence is limited or conflicting. Treat this as uncertain and verify sources.\n\n"
-                    + aligned_answer
-                )
+
+            all_citations = file_citations + web_citations
+            # Emit updated meta with all citations (web + file) after stream completes.
+            if web_citations:
+                yield f"event: meta\ndata: {json.dumps({'citations': [c.model_dump() for c in all_citations]}, ensure_ascii=True)}\n\n".encode("utf-8")
+
             chat_id, thread_id = save_chat(
-                payload.query, aligned_answer, citations, thread_id=payload.thread_id
+                payload.query, answer, all_citations, thread_id=payload.thread_id
             )
             if validated_file_ids is not None:
                 set_thread_file_ids(thread_id, validated_file_ids)
@@ -632,35 +614,20 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
                     _cache_set(
                         cache_key,
                         {
-                            "answer": aligned_answer,
-                            "citations": [c.model_dump() for c in citations],
+                            "answer": answer,
+                            "citations": [c.model_dump() for c in all_citations],
                             "chat_id": chat_id,
                             "thread_id": thread_id,
-                            "confidence": confidence,
                         },
                     )
-            done = {"chat_id": chat_id, "thread_id": thread_id, "confidence": confidence}
-            yield f"event: done\ndata: {json.dumps(done, ensure_ascii=True)}\n\n".encode(
-                "utf-8"
-            )
-            # Run background tasks without blocking the stream.
+            done = {"chat_id": chat_id, "thread_id": thread_id}
+            yield f"event: done\ndata: {json.dumps(done, ensure_ascii=True)}\n\n".encode("utf-8")
             asyncio.create_task(compress_thread_summary(thread_id))
             if is_new_thread:
-                asyncio.create_task(
-                    _save_thread_title(thread_id, payload.query, aligned_answer)
-                )
-            if aligned_answer != answer:
-                final_payload = {"answer": aligned_answer}
-                yield (
-                    f"event: final\ndata: {json.dumps(final_payload, ensure_ascii=True)}\n\n".encode(
-                        "utf-8"
-                    )
-                )
+                asyncio.create_task(_save_thread_title(thread_id, payload.query, answer))
         except Exception as exc:
             err = {"detail": str(exc)}
-            yield f"event: error\ndata: {json.dumps(err, ensure_ascii=True)}\n\n".encode(
-                "utf-8"
-            )
+            yield f"event: error\ndata: {json.dumps(err, ensure_ascii=True)}\n\n".encode("utf-8")
 
     return StreamingResponse(
         event_stream(),

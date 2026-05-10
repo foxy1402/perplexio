@@ -6,8 +6,8 @@ import re
 import shutil
 import subprocess
 import tempfile
-from urllib.parse import urlparse, urlunparse
-from datetime import datetime, timezone
+from urllib.parse import urlparse
+from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -16,9 +16,6 @@ from fastapi import HTTPException
 
 from app.models import Citation
 from app.settings import (
-    CITATION_ALIGN_MIN_SCORE,
-    CROSS_ENCODER_MODEL,
-    CROSS_ENCODER_TOP_K,
     EMBEDDING_API_KEY,
     EMBEDDING_BASE_URL,
     EMBEDDING_MODEL,
@@ -38,20 +35,10 @@ from app.settings import (
     OPENAI_BASE_URL,
     OPENAI_MODEL,
     OPENAI_TIMEOUT_SECONDS,
-    CONFIDENCE_ABSTAIN_THRESHOLD,
-    QUERY_REWRITE_COUNT,
-    RERANK_BLEND_ALPHA,
-    RERANK_USE_CROSS_ENCODER,
-    SEARXNG_BASE_URL,
-    SEARXNG_LANGUAGE,
-    SEARXNG_SAFESEARCH,
-    SEARXNG_TIMEOUT_SECONDS,
-    SEARCH_FOLLOWUP_QUERIES,
-    SEARCH_MAX_HOPS,
-    SEARCH_DEFAULT_MODE,
-    SOURCE_QUALITY_MIN,
-    TRUST_BLOCKED_DOMAINS,
-    TRUST_PREFERRED_DOMAINS,
+    SONAR_MODEL,
+    SONAR_SEARCH_MODE,
+    SONAR_SEARCH_RECENCY,
+    SONAR_SEARCH_DOMAIN_FILTER,
     SYSTEM_PROMPT,
     THREAD_HISTORY_TURNS,
     THREAD_RECENT_TURNS,
@@ -66,7 +53,6 @@ from app.settings import (
     TRANSCRIPTION_ENGINE,
     TRANSCRIPTION_LANGUAGE,
     TRANSCRIPTION_MODEL,
-    WEB_FUSION_FETCH_PER_QUERY,
     WHISPER_CPP_BIN,
     WHISPER_CPP_MODEL,
 )
@@ -94,9 +80,6 @@ from app.storage import (
 
 _FW_MODEL = None
 _FW_MODEL_NAME = ""
-_CROSS_ENCODER = None
-_CROSS_ENCODER_MODEL_NAME = ""
-RRF_K = 60
 
 # Shared httpx clients for connection reuse.
 _llm_client: httpx.AsyncClient | None = None
@@ -185,43 +168,6 @@ async def _retry_post(
     raise RuntimeError("Retry loop exited unexpectedly")
 
 
-_LLM_QUERY_PREAMBLES = (
-    "search for:", "search:", "query:", "find:", "look up:", "lookup:",
-    "find information about:", "web search:", "search query:", "keyword:",
-    "keywords:", "google:", "bing:",
-)
-
-
-def _sanitize_search_query(raw: str) -> str:
-    """Strip LLM artifacts from a generated search query so SearxNG gets clean keywords.
-
-    Removes:
-    - Leading list markers (numbers, bullets, dashes)
-    - Surrounding quotes / backticks
-    - LLM preambles ("Search for:", "Query:", etc.)
-    - Markdown bold/italic
-    - Caps length at 80 chars (breaks at last word boundary)
-    """
-    q = str(raw).strip()
-    # Strip leading list markers: "1.", "2)", "- ", "• ", "* "
-    q = re.sub(r"^\d+[\.\)]\s*", "", q)
-    q = re.sub(r"^[-\*\•\·]\s*", "", q)
-    # Strip surrounding quotes / backticks
-    q = q.strip("\"'`")
-    # Strip LLM preambles (case-insensitive)
-    lower_q = q.lower()
-    for prefix in _LLM_QUERY_PREAMBLES:
-        if lower_q.startswith(prefix):
-            q = q[len(prefix):].strip()
-            break
-    # Strip markdown bold/italic
-    q = re.sub(r"\*{1,2}(.*?)\*{1,2}", r"\1", q)
-    # Cap at 80 chars on a word boundary
-    if len(q) > 80:
-        truncated = q[:80].rsplit(" ", 1)
-        q = truncated[0] if len(truncated) > 1 else q[:80]
-    return q.strip()
-
 
 def _parse_json_array(raw: str, fallback: list | None = None) -> list:
     """Parse a JSON array from LLM output, with fallback bracket extraction."""
@@ -265,455 +211,9 @@ def _normalize_transcription_language(lang: str) -> str | None:
 logger = logging.getLogger("perplexio")
 
 
-_searxng_client: httpx.AsyncClient | None = None
 
 
-def _get_searxng_client() -> httpx.AsyncClient:
-    global _searxng_client
-    if _searxng_client is None or _searxng_client.is_closed:
-        _searxng_client = httpx.AsyncClient(timeout=httpx.Timeout(SEARXNG_TIMEOUT_SECONDS))
-    return _searxng_client
 
-
-async def search_web(query: str, top_k: int, search_mode: str = "all") -> list[dict[str, Any]]:
-    search_url = f"{SEARXNG_BASE_URL.rstrip('/')}/search"
-    mode = (search_mode or SEARCH_DEFAULT_MODE or "all").strip().lower()
-    params = {
-        "q": query,
-        "format": "json",
-        "language": SEARXNG_LANGUAGE,
-        "safesearch": SEARXNG_SAFESEARCH,
-    }
-    if mode == "web":
-        params["categories"] = "general"
-    elif mode == "social":
-        params["categories"] = "social media"
-    try:
-        client = _get_searxng_client()
-        resp = await client.get(search_url, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
-        results = payload.get("results", [])[:top_k]
-        if not results:
-            logger.warning("SearxNG returned 0 results for query: %s", query)
-        return results
-    except Exception as exc:
-        logger.error("SearxNG request failed (%s): %s", search_url, exc)
-        raise
-
-
-def _normalize_url(url: str) -> str:
-    try:
-        parsed = urlparse(url.strip())
-    except Exception:
-        return url.strip()
-    scheme = parsed.scheme or "http"
-    netloc = parsed.netloc.lower()
-    path = parsed.path or "/"
-    if path != "/" and path.endswith("/"):
-        path = path[:-1]
-    return urlunparse((scheme, netloc, path, "", "", ""))
-
-
-def source_quality_score(url: str, title: str, snippet: str) -> float:
-    score = 0.0
-    u = url.strip().lower()
-    t = title.strip()
-    s = snippet.strip()
-    if u.startswith("https://"):
-        score += 0.12
-    if len(t) >= 8:
-        score += 0.12
-    if len(s) >= 80:
-        score += 0.18
-    low_quality_tokens = ["pinterest.", "tiktok.", "/shorts", "reddit.com/r/"]
-    if any(tok in u for tok in low_quality_tokens):
-        score -= 0.12
-    high_quality_tokens = [
-        ".gov",
-        ".edu",
-        "wikipedia.org",
-        "arxiv.org",
-        "nature.com",
-        "reuters.com",
-        "apnews.com",
-        "bbc.com",
-        "who.int",
-        "nih.gov",
-    ]
-    if any(tok in u for tok in high_quality_tokens):
-        score += 0.2
-    domain = ""
-    try:
-        domain = urlparse(u).netloc
-    except Exception:
-        pass
-    if domain.count(".") >= 1:
-        score += 0.1
-    if any(b in domain for b in TRUST_BLOCKED_DOMAINS):
-        score -= 0.5
-    if any(p in domain for p in TRUST_PREFERRED_DOMAINS):
-        score += 0.25
-    return max(0.0, min(1.0, score))
-
-
-def _parse_published_datetime(item: dict[str, Any]) -> datetime | None:
-    candidates = [
-        item.get("publishedDate"),
-        item.get("published_date"),
-        item.get("date"),
-    ]
-    for raw in candidates:
-        if not raw:
-            continue
-        text = str(raw).strip()
-        if not text:
-            continue
-        try:
-            norm = text.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(norm)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
-        except Exception:
-            continue
-    return None
-
-
-def _token_set(text: str) -> set[str]:
-    parts = re.findall(r"[a-zA-Z0-9]{3,}", text.lower())
-    return {p for p in parts if not p.isdigit()}
-
-
-def source_relevance_boost(query: str, item: dict[str, Any]) -> float:
-    query_tokens = _token_set(query)
-    if not query_tokens:
-        return 0.0
-    text = f"{item.get('title','')} {item.get('content','')}"
-    src_tokens = _token_set(text)
-    if not src_tokens:
-        return 0.0
-    overlap = len(query_tokens.intersection(src_tokens)) / max(1, len(query_tokens))
-    return min(0.3, overlap * 0.5)
-
-
-def source_recency_boost(item: dict[str, Any]) -> float:
-    dt = _parse_published_datetime(item)
-    if dt is None:
-        return 0.0
-    age_days = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0)
-    if age_days <= 2:
-        return 0.2
-    if age_days <= 7:
-        return 0.14
-    if age_days <= 30:
-        return 0.08
-    if age_days <= 180:
-        return 0.03
-    return 0.0
-
-
-async def rewrite_queries(query: str) -> list[str]:
-    endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
-    headers = _llm_headers()
-    prompt = (
-        "Rewrite the user query into concise web-search keyword phrases (2–8 words each, "
-        "no full sentences, no articles). "
-        "Return a JSON array of strings only — 1 to 3 items. "
-        "No explanation, no numbering, no bullets, no markdown, no surrounding quotes."
-    )
-    body = {
-        "model": OPENAI_MODEL,
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": query},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 120,
-    }
-    try:
-        client = _get_llm_client()
-        resp = await _retry_post(client, endpoint, headers=headers, json=body)
-        payload = resp.json()
-        raw = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
-        data = _parse_json_array(raw, fallback=[query])
-        cleaned: list[str] = []
-        seen: set[str] = set()
-        for item in data:
-            q = _sanitize_search_query(str(item))
-            if len(q) < 2:
-                continue
-            key = q.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            cleaned.append(q)
-            if len(cleaned) >= max(1, QUERY_REWRITE_COUNT):
-                break
-        return cleaned or [query]
-    except Exception:
-        return [query]
-
-
-async def generate_followup_queries(
-    query: str, results: list[dict[str, Any]], max_queries: int
-) -> list[str]:
-    if not results or max_queries <= 0:
-        return []
-    excerpts: list[str] = []
-    for item in results[:6]:
-        title = str(item.get("title", "")).strip()
-        snippet = str(item.get("content", "")).strip()
-        if title or snippet:
-            excerpts.append(f"- {title}: {snippet[:220]}")
-    if not excerpts:
-        return []
-    endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
-    headers = _llm_headers()
-    body = {
-        "model": OPENAI_MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Generate targeted follow-up web-search keyword phrases (2–8 words each). "
-                    "Return a JSON array of strings only — no explanation, no bullets, no markdown."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Original query: {query}\n\nEvidence:\n" + "\n".join(excerpts),
-            },
-        ],
-        "temperature": 0.2,
-        "max_tokens": 120,
-    }
-    try:
-        client = _get_llm_client()
-        resp = await _retry_post(client, endpoint, headers=headers, json=body)
-        payload = resp.json()
-        raw = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
-        data = _parse_json_array(raw)
-        out: list[str] = []
-        seen: set[str] = set()
-        for item in data:
-            s = _sanitize_search_query(str(item))
-            if len(s) < 2:
-                continue
-            k = s.lower()
-            if k in seen:
-                continue
-            seen.add(k)
-            out.append(s)
-            if len(out) >= max_queries:
-                break
-        return out
-    except Exception:
-        return []
-
-
-async def _fuse_search_queries(
-    queries: list[str], per_query_top: int, search_mode: str
-) -> list[dict[str, Any]]:
-    searches = [search_web(q, per_query_top, search_mode=search_mode) for q in queries]
-    results_by_query = await asyncio.gather(*searches, return_exceptions=True)
-    fused: dict[str, dict[str, Any]] = {}
-    for q_idx, result_set in enumerate(results_by_query):
-        if isinstance(result_set, Exception):
-            continue
-        for rank, item in enumerate(result_set):
-            url = str(item.get("url", "")).strip()
-            if not url:
-                continue
-            nurl = _normalize_url(url)
-            score = 1.0 / (RRF_K + rank + 1 + (q_idx * 0.1))
-            existing = fused.get(nurl)
-            if existing is None:
-                copy = dict(item)
-                copy["_fusion_score"] = score
-                copy["_norm_url"] = nurl
-                quality = source_quality_score(
-                    str(copy.get("url", "")),
-                    str(copy.get("title", "")),
-                    str(copy.get("content", "")),
-                )
-                # Blend baseline trust with query match and recency.
-                quality += source_relevance_boost(queries[0] if queries else "", copy)
-                quality += source_recency_boost(copy)
-                copy["_quality_score"] = max(0.0, min(1.0, quality))
-                fused[nurl] = copy
-            else:
-                existing["_fusion_score"] = float(existing.get("_fusion_score", 0.0)) + score
-                if len(str(item.get("content", ""))) > len(str(existing.get("content", ""))):
-                    existing["content"] = item.get("content", "")
-                    existing["title"] = item.get("title", existing.get("title", ""))
-                # Keep the higher confidence quality estimate.
-                q_new = source_quality_score(
-                    str(item.get("url", "")),
-                    str(item.get("title", "")),
-                    str(item.get("content", "")),
-                )
-                q_new += source_relevance_boost(queries[0] if queries else "", item)
-                q_new += source_recency_boost(item)
-                existing["_quality_score"] = max(
-                    float(existing.get("_quality_score", 0.0)),
-                    max(0.0, min(1.0, q_new)),
-                )
-    return list(fused.values())
-
-
-async def multi_search_fusion(
-    query: str, top_k: int, search_mode: str = "all"
-) -> list[dict[str, Any]]:
-    rewrites = await rewrite_queries(query)
-    if query.lower() not in [q.lower() for q in rewrites]:
-        rewrites = [query] + rewrites
-    queries = rewrites[: max(1, QUERY_REWRITE_COUNT)]
-    ranked = await _fuse_search_queries(queries, WEB_FUSION_FETCH_PER_QUERY, search_mode)
-
-    if SEARCH_MAX_HOPS > 1:
-        followups = await generate_followup_queries(
-            query=query,
-            results=sorted(
-                ranked, key=lambda x: float(x.get("_fusion_score", 0.0)), reverse=True
-            )[:top_k],
-            max_queries=max(0, SEARCH_FOLLOWUP_QUERIES),
-        )
-        if followups:
-            hop = await _fuse_search_queries(
-                followups, WEB_FUSION_FETCH_PER_QUERY, search_mode
-            )
-            merged = {str(x.get("_norm_url", "")): x for x in ranked}
-            for item in hop:
-                key = str(item.get("_norm_url", ""))
-                if not key:
-                    continue
-                if key in merged:
-                    merged[key]["_fusion_score"] = float(merged[key].get("_fusion_score", 0.0)) + float(
-                        item.get("_fusion_score", 0.0)
-                    )
-                    if len(str(item.get("content", ""))) > len(str(merged[key].get("content", ""))):
-                        merged[key]["content"] = item.get("content", "")
-                        merged[key]["title"] = item.get("title", merged[key].get("title", ""))
-                else:
-                    merged[key] = item
-            ranked = list(merged.values())
-
-    filtered = [x for x in ranked if float(x.get("_quality_score", 0.0)) >= SOURCE_QUALITY_MIN]
-    if filtered:
-        ranked = filtered
-    # Penalize domain over-concentration for better source diversity.
-    domain_counts: dict[str, int] = {}
-    for item in ranked:
-        try:
-            domain = urlparse(str(item.get("url", ""))).netloc.lower()
-        except Exception:
-            domain = ""
-        if not domain:
-            continue
-        cnt = domain_counts.get(domain, 0)
-        if cnt > 0:
-            item["_fusion_score"] = float(item.get("_fusion_score", 0.0)) * (0.92 ** cnt)
-        domain_counts[domain] = cnt + 1
-    ranked.sort(key=lambda x: float(x.get("_fusion_score", 0.0)), reverse=True)
-    reranked = await rerank_web_results(query, ranked, top_k=max(top_k, WEB_FUSION_FETCH_PER_QUERY))
-    return reranked[:top_k]
-
-
-async def rerank_web_results(
-    query: str, results: list[dict[str, Any]], top_k: int
-) -> list[dict[str, Any]]:
-    if not results:
-        return []
-    if RERANK_USE_CROSS_ENCODER:
-        ce = _load_cross_encoder()
-        if ce is not None:
-            limited = results[: max(top_k, CROSS_ENCODER_TOP_K)]
-            pairs = []
-            for item in limited:
-                title = str(item.get("title", "")).strip()
-                content = str(item.get("content", "")).strip()
-                pairs.append((query, (title + "\n" + content).strip()[:1400]))
-            try:
-                ce_scores = ce.predict(pairs)
-                alpha = min(max(RERANK_BLEND_ALPHA, 0.0), 1.0)
-                scored: list[tuple[float, dict[str, Any]]] = []
-                for idx, item in enumerate(limited):
-                    ce_score = float(ce_scores[idx])
-                    fusion = float(item.get("_fusion_score", 0.0))
-                    score = (alpha * ce_score) + ((1.0 - alpha) * fusion)
-                    enriched = dict(item)
-                    enriched["_rank_score"] = score
-                    scored.append((score, enriched))
-                scored.sort(key=lambda x: x[0], reverse=True)
-                return [x[1] for x in scored[:top_k]]
-            except Exception:
-                pass
-    texts = []
-    for item in results:
-        title = str(item.get("title", "")).strip()
-        content = str(item.get("content", "")).strip()
-        texts.append((title + "\n" + content).strip()[:1200])
-    try:
-        vectors = await embed_texts([query] + texts)
-        if len(vectors) != len(texts) + 1:
-            return results[:top_k]
-        qv = vectors[0]
-        scored: list[tuple[float, dict[str, Any]]] = []
-        for idx, item in enumerate(results):
-            sim = cosine_similarity(qv, vectors[idx + 1])
-            fusion = float(item.get("_fusion_score", 0.0))
-            alpha = min(max(RERANK_BLEND_ALPHA, 0.0), 1.0)
-            score = (alpha * sim) + ((1.0 - alpha) * fusion)
-            enriched = dict(item)
-            enriched["_rank_score"] = score
-            scored.append((score, enriched))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [x[1] for x in scored[:top_k]]
-    except Exception:
-        return results[:top_k]
-
-
-def _load_cross_encoder():
-    global _CROSS_ENCODER, _CROSS_ENCODER_MODEL_NAME
-    if _CROSS_ENCODER is not None and _CROSS_ENCODER_MODEL_NAME == CROSS_ENCODER_MODEL:
-        return _CROSS_ENCODER
-    try:
-        from sentence_transformers import CrossEncoder
-    except Exception:
-        return None
-    try:
-        _CROSS_ENCODER = CrossEncoder(CROSS_ENCODER_MODEL)
-        _CROSS_ENCODER_MODEL_NAME = CROSS_ENCODER_MODEL
-        return _CROSS_ENCODER
-    except Exception:
-        _CROSS_ENCODER = None
-        _CROSS_ENCODER_MODEL_NAME = ""
-        return None
-
-
-def build_context(
-    search_results: list[dict[str, Any]], query: str = ""
-) -> tuple[str, list[Citation]]:
-    citations: list[Citation] = []
-    chunks: list[str] = []
-    today = datetime.now().strftime("%Y-%m-%d")
-    header = f"Today is {today}."
-    if query:
-        header += f" Web search results for '{query}':"
-    chunks.append(header)
-    for idx, item in enumerate(search_results, start=1):
-        title = str(item.get("title", "")).strip() or f"Result {idx}"
-        url = str(item.get("url", "")).strip()
-        snippet = str(item.get("content", "")).strip()
-        if not url:
-            continue
-        citation = Citation(title=title, url=url, snippet=snippet)
-        citations.append(citation)
-        chunks.append(
-            f"[{idx}] Title: {citation.title}\nURL: {citation.url}\nSnippet: {citation.snippet}"
-        )
-    return "\n\n".join(chunks), citations
 
 
 _FILE_SYSTEM_PROMPT = (
@@ -848,10 +348,55 @@ async def compress_thread_summary(thread_id: int) -> None:
         pass  # Summarization is best-effort; don't block the main flow.
 
 
-async def ask_model(messages: list[dict[str, str]]) -> str:
+def parse_sonar_citations(citations_urls: list[str]) -> list[Citation]:
+    """Convert Perplexity Sonar citations URL list to Citation objects.
+
+    Citation markers in answer text are 1-based ([1], [2]…);
+    citations_urls is 0-based. Title is derived from the domain.
+    """
+    result: list[Citation] = []
+    for url in citations_urls:
+        try:
+            domain = urlparse(url).netloc.lstrip("www.")
+        except Exception:
+            domain = url[:40]
+        result.append(Citation(title=domain or url[:40], url=url, snippet=""))
+    return result
+
+
+def _sonar_extra_params(search_mode: str) -> dict:
+    """Build Perplexity Sonar-specific params to merge into the request body.
+
+    search_mode "files" → disable_search=True (RAG-only, no web search).
+    All other modes → enable_search_classifier=True (Sonar decides automatically).
+    """
+    params: dict = {}
+    if SONAR_SEARCH_MODE:
+        params["search_mode"] = SONAR_SEARCH_MODE
+    if SONAR_SEARCH_RECENCY:
+        params["search_recency_filter"] = SONAR_SEARCH_RECENCY
+    if SONAR_SEARCH_DOMAIN_FILTER:
+        params["search_domain_filter"] = list(SONAR_SEARCH_DOMAIN_FILTER)
+    if search_mode == "files":
+        params["disable_search"] = True
+    else:
+        params["enable_search_classifier"] = True
+    return params
+
+
+async def ask_model(
+    messages: list[dict[str, str]], search_mode: str = "auto"
+) -> tuple[str, list[Citation]]:
+    """Call Perplexity Sonar and return (answer_text, citations)."""
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
     headers = _llm_headers()
-    body = {"model": OPENAI_MODEL, "messages": messages, "temperature": 0.2, "max_tokens": LLM_MAX_TOKENS}
+    body = {
+        "model": SONAR_MODEL,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": LLM_MAX_TOKENS,
+        **_sonar_extra_params(search_mode),
+    }
 
     client = _get_llm_client()
     resp = await _retry_post(client, endpoint, headers=headers, json=body)
@@ -864,7 +409,8 @@ async def ask_model(messages: list[dict[str, str]]) -> str:
     answer = str(message.get("content", "")).strip()
     if not answer:
         raise HTTPException(status_code=502, detail="LLM returned empty content.")
-    return answer
+    citations = parse_sonar_citations(payload.get("citations", []))
+    return answer, citations
 
 
 async def suggest_followups(
@@ -957,172 +503,30 @@ async def generate_thread_title(query: str, answer: str) -> str:
         return query[:60]
 
 
-_GREETINGS = frozenset({
-    'hi', 'hello', 'hey', 'hola', 'thanks', 'thank you', 'bye', 'goodbye',
-    'ok', 'okay', 'yes', 'no', 'sure', 'lol', 'haha', 'nice', 'great', 'cool',
-    'good morning', 'good night', 'good evening', 'good afternoon',
-    'ty', 'thx', 'np', 'yw',
-})
 
 
-def _skip_search_decision(text: str) -> bool:
-    """True for messages that obviously need no web search — skips the LLM router call."""
-    if len(text) < 6:
-        return True
-    return text.lower().rstrip('!?.,: ') in _GREETINGS
+async def ask_model_stream(
+    messages: list[dict[str, str]], search_mode: str = "auto"
+) -> AsyncIterator[str | list]:
+    """Stream tokens from Perplexity Sonar.
 
-
-def _make_search_decision_prompt() -> str:
-    """Build the standalone search-router prompt with today's date injected."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    return (
-        f"You are a search router. Decide if the user's latest message needs a "
-        f"live web search to answer accurately. Today's date is {today}.\n\n"
-        "Respond with EXACTLY one line:\n"
-        "  SEARCH: <2-6 word query>   — needs current/real-time info\n"
-        "  NOSEARCH                   — can answer from training knowledge\n\n"
-        "Use SEARCH for: current events, live prices, weather, sports scores, "
-        "recent news, product availability, real-time data, people's current status, "
-        "or any fact you are NOT fully confident about.\n\n"
-        "Use NOSEARCH for: coding help, math, creative writing, definitions, "
-        "explanations, greetings, opinions, general knowledge, or anything "
-        "you can confidently answer from training data.\n\n"
-        "CRITICAL: Output ONLY one line. No explanations. No apologies. "
-        "No extra text after SEARCH: query. Just the decision."
-    )
-
-
-def _parse_search_query(response: str) -> str | None:
-    """Extract a clean search query from the router's SEARCH/NOSEARCH response.
-
-    Returns a clean query string if the router chose SEARCH, or None for NOSEARCH.
-    Handles every known model output failure mode: doubled SEARCH: prefix,
-    inline NOSEARCH bleed-through (Cerebras quirk), surrounding quotes/backticks,
-    markdown bold, and explanatory text after the query.
-    Ported from bot.py lines 149-210.
+    Yields str tokens during streaming. At the end, yields one list value
+    containing Citation objects parsed from Perplexity's citations array
+    (delivered in the final SSE chunk before [DONE]).
+    Callers detect the citation sentinel via `isinstance(token, list)`.
     """
-    stripped = response.strip()
-
-    if stripped.upper().startswith("SEARCH:"):
-        raw = stripped[7:].strip().split("\n")[0].strip()
-    else:
-        m = re.search(r"(?i)\bSEARCH:\s*(.+)", stripped)
-        if not m:
-            return None
-        raw = m.group(1).strip().split("\n")[0].strip()
-
-    # Truncate at NOSEARCH if the model appends it on the same line (Cerebras quirk)
-    # Also recover a new SEARCH: query that follows NOSEARCH inline.
-    parts = re.split(r"(?i)NOSEARCH", raw, maxsplit=1)
-    if len(parts) == 2 and re.match(r"(?i)\s*SEARCH:\s*", parts[1]):
-        raw = re.sub(r"(?i)^SEARCH:\s*", "", parts[1]).strip()
-    else:
-        raw = parts[0].strip()
-
-    # Strip repeated SEARCH: prefix (some models double/triple the output).
-    while raw.upper().startswith("SEARCH:"):
-        raw = raw[7:].strip()
-
-    # Truncate at any remaining inline SEARCH: echo.
-    m_echo = re.search(r"(?i)SEARCH:", raw)
-    if m_echo:
-        raw = raw[: m_echo.start()].strip()
-
-    # Strip surrounding quotes/backticks.
-    for q in ('"', "'", "`"):
-        if len(raw) > 2 and raw[0] == q and raw[-1] == q:
-            raw = raw[1:-1].strip()
-
-    # Strip markdown bold/italic.
-    raw = re.sub(r"\*{1,2}(.*?)\*{1,2}", r"\1", raw)
-
-    # Keep only leading valid-query characters.
-    m = re.match(r"^[\w\s\-'\".,/&+%@#()]+", raw, re.UNICODE)
-    raw = m.group(0).strip() if m else ""
-
-    # Hard cap: 10 words / 120 chars.
-    words = raw.split()
-    if len(words) > 10:
-        raw = " ".join(words[:10])
-    raw = raw[:120]
-
-    return raw if len(raw) >= 2 else None
-
-
-async def ai_decide_and_route(
-    query: str,
-    thread_history: list[dict],
-) -> str | None:
-    """Decide whether to search and return the optimised query, or None to answer directly.
-
-    - Skips the LLM call entirely for obvious greetings (_skip_search_decision).
-    - Builds proper role/content history so the router has full multi-turn context.
-    - Uses max_tokens=20 (the response is at most one line).
-    - Retries 3 times with a 1s delay on empty/error responses.
-    - On total failure, searches with the raw user query (optimistic fallback)
-      rather than silently going NOSEARCH.
-    """
-    q = query.strip()
-    if _skip_search_decision(q):
-        return None
-
-    decision_msgs: list[dict] = [
-        {"role": "system", "content": _make_search_decision_prompt()}
-    ]
-    for turn in thread_history:
-        decision_msgs.append({"role": "user", "content": turn.get("query", "")})
-        decision_msgs.append({"role": "assistant", "content": turn.get("answer", "")})
-    decision_msgs.append({"role": "user", "content": q})
-
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
     headers = _llm_headers()
     body = {
-        "model": OPENAI_MODEL,
-        "messages": decision_msgs,
-        "temperature": 0.0,
-        "max_tokens": 20,
-    }
-
-    last_exc: Exception | None = None
-    for attempt in range(1, 4):
-        try:
-            client = _get_llm_client()
-            resp = await _retry_post(client, endpoint, headers=headers, json=body)
-            raw = (
-                resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
-            )
-            if raw.strip():
-                return _parse_search_query(raw)
-            logger.warning("ai_decide_and_route attempt %d: empty response", attempt)
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("ai_decide_and_route attempt %d failed: %s", attempt, exc)
-        if attempt < 3:
-            await asyncio.sleep(1.0)
-
-    fallback = q[:80].strip()
-    logger.warning(
-        "ai_decide_and_route: all retries failed (%s) — optimistic fallback SEARCH: '%s'",
-        last_exc or "empty response",
-        fallback,
-    )
-    return fallback or None
-
-
-async def ask_model_stream(messages: list[dict[str, str]]) -> AsyncIterator[str]:
-    endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
-    headers = _llm_headers()
-    body = {
-        "model": OPENAI_MODEL,
+        "model": SONAR_MODEL,
         "messages": messages,
         "temperature": 0.2,
         "max_tokens": LLM_MAX_TOKENS,
         "stream": True,
+        **_sonar_extra_params(search_mode),
     }
 
     client = _get_llm_client()
-    # Probe with a retryable non-streaming call first to handle 429/5xx before
-    # opening the SSE stream (streaming responses can't be retried mid-flight).
     attempts = max(1, LLM_RETRY_MAX_ATTEMPTS)
     delay = max(0.1, LLM_RETRY_BASE_DELAY)
     for attempt in range(1, attempts + 1):
@@ -1137,22 +541,30 @@ async def ask_model_stream(messages: list[dict[str, str]]) -> AsyncIterator[str]
                     delay *= max(1.0, LLM_RETRY_BACKOFF_FACTOR)
                     continue
                 resp.raise_for_status()
+                citations_sentinel: list[Citation] | None = None
                 async for line in resp.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
                     if data == "[DONE]":
-                        return
+                        break
                     try:
                         payload = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    # Capture Perplexity citations array from any chunk that has it.
+                    raw_cites = payload.get("citations")
+                    if raw_cites and isinstance(raw_cites, list):
+                        citations_sentinel = parse_sonar_citations(raw_cites)
                     choices = payload.get("choices", [])
                     if not choices:
                         continue
                     token = choices[0].get("delta", {}).get("content")
                     if token:
                         yield str(token)
+                # Emit citations sentinel after all tokens (empty list if Sonar
+                # didn't return any, e.g. when routed through a proxy that strips them).
+                yield citations_sentinel if citations_sentinel is not None else []
                 return
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
             if attempt < attempts:
@@ -1173,8 +585,16 @@ async def prepare_ask(
     thread_id: int | None,
     file_ids: list[int] | None,
     search_mode: str = "auto",
-) -> tuple[list[dict[str, str]], list[Citation]]:
-    # Resolve effective file IDs once so retrieval doesn't repeat the DB lookup.
+) -> tuple[list[dict[str, str]], list[Citation], str]:
+    """Load thread history, retrieve file context if needed, and build LLM messages.
+
+    Returns (messages, file_citations, effective_search_mode).
+    - effective_search_mode "files" → Sonar will have disable_search=True.
+    - effective_search_mode "auto"  → Sonar's enable_search_classifier decides.
+    - effective_search_mode "research" → callers use SONAR_MODEL=perplexity-reasoning.
+    Web citations come from Sonar's response at call time, not here.
+    """
+    # Resolve file IDs.
     effective_file_ids: list[int] | None
     if file_ids is not None:
         effective_file_ids = normalize_file_ids(file_ids)
@@ -1183,13 +603,7 @@ async def prepare_ask(
     else:
         effective_file_ids = None
 
-    # "auto" triggers files-only mode when the caller explicitly passes file_ids in
-    # THIS request. Thread-attached files are included as supplementary context
-    # (via include_files) but do not suppress web search on their own — the user
-    # may still be asking general questions while files are attached to the thread.
-    # Note: use effective_file_ids (post-normalize) so that file_ids=[] is treated
-    # the same as file_ids=None — an empty list means no files were actually attached.
-    # Build history first — the classifier uses it for context.
+    # Load thread history and rolling summary.
     history: list[dict[str, str]] = []
     summary_text: str | None = None
     if thread_id is not None:
@@ -1202,188 +616,39 @@ async def prepare_ask(
         else:
             history = get_thread_history(thread_id, THREAD_HISTORY_TURNS)
 
-    effective_mode = search_mode
-    _router_query: str | None = None  # optimised query from the router (auto mode only)
-    if search_mode == "auto":
-        has_files = file_ids is not None and bool(effective_file_ids)
-        _router_query = await ai_decide_and_route(query, history)
-        needs_search = _router_query is not None
-        if has_files:
-            # Files are attached. If the question also needs a web search (e.g. live
-            # data the file can't have), use hybrid mode so both sources are available.
-            effective_mode = "hybrid" if needs_search else "files"
-        else:
-            effective_mode = "all" if needs_search else "direct"
+    has_files = bool(effective_file_ids)
 
-    # "direct" mode: skip all retrieval, answer from LLM training knowledge.
-    if effective_mode == "direct":
-        messages = build_llm_messages(
-            query=query,
-            context="",
-            thread_history=history,
-            thread_summary=summary_text,
-            files_only=False,
-        )
-        return messages, []
-
-    web_context = ""
-    web_citations: list[Citation] = []
-    # "hybrid" behaves like "all" for web search (uses "all" SearxNG category).
-    web_search_mode = "all" if effective_mode == "hybrid" else effective_mode
-    if effective_mode not in ("files", "direct"):
-        if _router_query is not None:
-            # Auto-routed: router already produced an optimised query — skip rewrite_queries
-            # and call _fuse_search_queries directly to save one LLM API call.
-            raw_results = await _fuse_search_queries(
-                [_router_query], WEB_FUSION_FETCH_PER_QUERY, web_search_mode
-            )
-            filtered = [
-                x for x in raw_results
-                if float(x.get("_quality_score", 0.0)) >= SOURCE_QUALITY_MIN
-            ]
-            search_results = await rerank_web_results(
-                _router_query, filtered or raw_results, top_k=top_k
-            )
-            web_context, web_citations = build_context(search_results, _router_query)
-        else:
-            # Manual mode (Web/Social/All chips) — full rewrite + RRF as before.
-            search_results = await multi_search_fusion(
-                query, top_k=top_k, search_mode=web_search_mode
-            )
-            web_context, web_citations = build_context(search_results)
-
+    # Retrieve file context when files are attached and the mode permits it.
     file_context = ""
     file_citations: list[Citation] = []
-    if include_files or effective_mode in ("files", "hybrid"):
+    if has_files and (include_files or search_mode in ("auto", "files")):
         file_context, file_citations = await retrieve_file_context(
             query=query, file_ids=effective_file_ids
         )
         if not file_context:
             file_context, file_citations = build_file_context(effective_file_ids)
 
-    context_parts = []
-    if web_context:
-        context_parts.append("Web snippets:\n" + web_context)
-    if file_context:
-        context_parts.append("Uploaded files:\n" + file_context)
-    context = "\n\n".join(context_parts)
-    if not context:
-        if effective_mode in ("files", "hybrid"):
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "No content found in the attached files. "
-                    "Ensure the files are fully indexed before asking questions about them."
-                ),
-            )
+    # Guard: if user explicitly picked "files" mode but nothing was found, error early.
+    if search_mode == "files" and not file_context:
         raise HTTPException(
-            status_code=502,
+            status_code=404,
             detail=(
-                f"No search results found. SearxNG endpoint ({SEARXNG_BASE_URL}) may be unreachable "
-                "or returned empty results. Check SEARXNG_BASE_URL env var and container network."
+                "No content found in the attached files. "
+                "Ensure the files are fully indexed before asking questions about them."
             ),
         )
 
+    effective_mode = search_mode  # passed through to ask_model / ask_model_stream
+
     messages = build_llm_messages(
         query=query,
-        context=context,
+        context=file_context,
         thread_history=history,
         thread_summary=summary_text,
-        files_only=(effective_mode == "files"),
+        files_only=(search_mode == "files" and has_files),
     )
-    return messages, web_citations + file_citations
+    return messages, file_citations, effective_mode
 
-
-async def align_answer_citations(answer: str, citations: list[Citation]) -> str:
-    text = (answer or "").strip()
-    if not text or not citations:
-        return text
-    lines = text.splitlines()
-    candidate_idxs: list[int] = []
-    candidate_texts: list[str] = []
-    marker_re = re.compile(r"\[\d+\]")
-    sentence_split_re = re.compile(r"(?<=[\.\!\?])\s+")
-    for idx, line in enumerate(lines):
-        s = line.strip()
-        if not s or marker_re.search(s):
-            continue
-        # Skip markdown table rows / separator lines (start with |)
-        if s.startswith("|"):
-            continue
-        claims = [
-            p.strip()
-            for p in sentence_split_re.split(s)
-            if len(p.strip()) >= 25 and any(ch.isalpha() for ch in p)
-        ]
-        if not claims:
-            continue
-        for claim in claims:
-            candidate_idxs.append(idx)
-            candidate_texts.append(claim[:500])
-
-    if not candidate_texts:
-        return text
-
-    cite_texts = []
-    for i, c in enumerate(citations, start=1):
-        cite_texts.append(f"[{i}] {c.title}\n{c.snippet}".strip()[:600])
-
-    try:
-        vectors = await embed_texts(candidate_texts + cite_texts, input_type="passage")
-    except Exception:
-        return text
-    split = len(candidate_texts)
-    if len(vectors) != len(candidate_texts) + len(cite_texts):
-        return text
-
-    cand_vecs = vectors[:split]
-    cite_vecs = vectors[split:]
-    line_to_refs: dict[int, list[int]] = {}
-    for local_idx, line_idx in enumerate(candidate_idxs):
-        ranked_refs: list[tuple[float, int]] = []
-        for ci, cvec in enumerate(cite_vecs, start=1):
-            score = cosine_similarity(cand_vecs[local_idx], cvec)
-            ranked_refs.append((score, ci))
-        ranked_refs.sort(key=lambda x: x[0], reverse=True)
-        chosen = [ref for score, ref in ranked_refs if score >= CITATION_ALIGN_MIN_SCORE][:2]
-        if not chosen and ranked_refs:
-            chosen = [ranked_refs[0][1]]
-        current = line_to_refs.setdefault(line_idx, [])
-        for ref in chosen:
-            if ref not in current:
-                current.append(ref)
-    for line_idx, refs in line_to_refs.items():
-        refs_sorted = sorted(refs)
-        lines[line_idx] = lines[line_idx].rstrip() + " " + " ".join(
-            f"[{r}]" for r in refs_sorted
-        )
-    return "\n".join(lines)
-
-
-def _detect_citation_conflict(citations: list[Citation]) -> bool:
-    blobs = [f"{c.title} {c.snippet}".lower() for c in citations]
-    if len(blobs) < 2:
-        return False
-    neg = ["not ", "no ", "never ", "false", "incorrect", "denied"]
-    pos = ["is ", "are ", "confirmed", "true", "approved", "yes"]
-    neg_hits = sum(1 for b in blobs if any(k in b for k in neg))
-    pos_hits = sum(1 for b in blobs if any(k in b for k in pos))
-    return neg_hits > 0 and pos_hits > 0
-
-
-def compute_answer_confidence(answer: str, citations: list[Citation]) -> tuple[float, bool]:
-    length_score = min(1.0, max(0.0, len(answer.strip()) / 700.0))
-    cite_score = min(1.0, len(citations) / 5.0)
-    snippet_score = min(
-        1.0,
-        (sum(len(c.snippet or "") for c in citations) / max(1, len(citations))) / 220.0
-        if citations
-        else 0.0,
-    )
-    conflict_penalty = 0.25 if _detect_citation_conflict(citations) else 0.0
-    confidence = (0.35 * length_score) + (0.4 * cite_score) + (0.25 * snippet_score)
-    confidence = max(0.0, min(1.0, confidence - conflict_penalty))
-    return confidence, confidence < CONFIDENCE_ABSTAIN_THRESHOLD
 
 
 def chunk_text(text: str, size: int, overlap: int) -> list[str]:

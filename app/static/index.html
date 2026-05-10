@@ -283,19 +283,6 @@
       color: var(--muted);
       margin-left: 1px;
     }
-    /* Confidence badge */
-    .confidence-badge {
-      display: inline-flex;
-      align-items: center;
-      border-radius: 20px;
-      padding: 2px 9px;
-      font-size: 11px;
-      font-weight: 500;
-      margin-top: 8px;
-    }
-    .confidence-high { background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); }
-    .confidence-mid  { background: rgba(234,179,8,0.12);  color: #facc15; border: 1px solid rgba(234,179,8,0.25); }
-    .confidence-low  { background: rgba(239,68,68,0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
     /* Copy button */
     .copy-btn {
       background: transparent;
@@ -662,11 +649,9 @@
           <div id="fileSelectionStatus" class="hint"></div>
           <div style="flex:1;"></div>
           <div class="mode-chips" id="modeChips">
-            <button class="mode-chip active" data-mode="auto"   onclick="setMode(this)" title="Smart: routes to web search or direct LLM answer automatically">Auto</button>
-            <button class="mode-chip"        data-mode="web"    onclick="setMode(this)">Web</button>
-            <button class="mode-chip"        data-mode="files"  onclick="setMode(this)">Files</button>
-            <button class="mode-chip"        data-mode="social" onclick="setMode(this)">Social</button>
-            <button class="mode-chip"        data-mode="all"    onclick="setMode(this)">All</button>
+            <button class="mode-chip active" data-mode="auto"     onclick="setMode(this)" title="Sonar decides whether web search is needed">Auto</button>
+            <button class="mode-chip"        data-mode="files"    onclick="setMode(this)" title="Answer from uploaded files only — no web search">Files</button>
+            <button class="mode-chip"        data-mode="research" onclick="setMode(this)" title="Deep research with Sonar Reasoning">Research</button>
           </div>
           <button id="askBtn" onclick="ask()" style="border-radius:8px;padding:6px 16px;font-size:13px;">Ask</button>
         </div>
@@ -900,18 +885,6 @@
       });
     }
 
-    /* ── confidence badge ── */
-    function makeConfidenceBadge(confidence) {
-      const badge = document.createElement("div");
-      badge.className = "confidence-badge";
-      const pct = Math.round(confidence * 100);
-      if (confidence >= 0.7)      badge.classList.add("confidence-high");
-      else if (confidence >= 0.4) badge.classList.add("confidence-mid");
-      else                        badge.classList.add("confidence-low");
-      badge.textContent = pct + "% confident";
-      return badge;
-    }
-
     /* ── clipboard helper: works on both HTTPS and plain HTTP ── */
     async function copyText(text) {
       if (navigator.clipboard && window.isSecureContext) {
@@ -1005,17 +978,9 @@
       const aEl = document.createElement("div");
       aEl.className = "answer";
 
-      // Detect and strip legacy confidence suffix, show as badge
-      const confMatch = String(answer || "").match(/\n\n\(Confidence:\s*(\d+\.\d+)\)\s*$/);
-      const legacyConf = confMatch ? parseFloat(confMatch[1]) : null;
-
       msg.appendChild(aEl);
       setAnswerContent(aEl, answer || "", citations || []);
-
-      if (legacyConf !== null) {
-        msg.appendChild(makeConfidenceBadge(legacyConf));
-      }
-      addCopyButton(msg, String(answer || "").replace(/\n\n\(Confidence:\s*\d+\.\d+\)\s*$/, ""));
+      addCopyButton(msg, String(answer || ""));
 
       thread.appendChild(msg);
       thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
@@ -1136,15 +1101,9 @@
               gotDone = true;
               activeThreadId = ev.payload.thread_id;
               activeChatId   = ev.payload.chat_id;
-              const confidence = parseFloat(ev.payload.confidence || 0);
 
               // Final markdown render
               setAnswerContent(answerEl, streamedText, citationList);
-
-              // Confidence badge
-              if (confidence > 0) {
-                msg.insertBefore(makeConfidenceBadge(confidence), answerEl.nextSibling);
-              }
               addCopyButton(msg, streamedText);
               thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
 

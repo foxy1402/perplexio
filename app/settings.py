@@ -34,25 +34,38 @@ def env_list(name: str, default: str = "") -> list[str]:
     return [part.strip().lower() for part in raw.split(",") if part.strip()]
 
 
-SEARXNG_BASE_URL = env_str("SEARXNG_BASE_URL", "http://searxng:8080")
-SEARXNG_LANGUAGE = env_str("SEARXNG_LANGUAGE", "en-US")
-SEARXNG_SAFESEARCH = env_int("SEARXNG_SAFESEARCH", 0)
-SEARXNG_RESULT_COUNT = env_int("SEARXNG_RESULT_COUNT", 6)
-SEARXNG_TIMEOUT_SECONDS = env_float("SEARXNG_TIMEOUT_SECONDS", 20.0)
-
-OPENAI_BASE_URL = env_str("OPENAI_BASE_URL", "http://localhost:11434/v1")
+# ---------------------------------------------------------------------------
+# LLM — used for non-search tasks (thread titles, summaries, OCR, followups)
+# ---------------------------------------------------------------------------
+OPENAI_BASE_URL = env_str("OPENAI_BASE_URL", "https://gen.pollinations.ai")
 OPENAI_API_KEY = env_str("OPENAI_API_KEY", "")
-OPENAI_MODEL = env_str("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = env_str("OPENAI_MODEL", "openai")
 OPENAI_TIMEOUT_SECONDS = env_float("OPENAI_TIMEOUT_SECONDS", 60.0)
 SYSTEM_PROMPT = env_str(
     "SYSTEM_PROMPT",
     (
-        "You are a search-grounded assistant. Answer strictly from the provided web snippets. "
-        "Never invent URLs, statistics, quotes, or specific claims not present in the sources. "
-        "If the snippets do not contain the needed information, say so explicitly rather than guessing."
+        "You are a helpful, accurate assistant. "
+        "Answer from the provided context and your training knowledge. "
+        "Never invent URLs, statistics, quotes, or facts you are unsure about."
     ),
 )
 
+# ---------------------------------------------------------------------------
+# Perplexity Sonar via Pollinations.ai — handles web search natively
+# Base URL: https://gen.pollinations.ai  (OpenAI-compatible)
+# Models: perplexity-fast (Sonar) | perplexity-reasoning (Sonar Reasoning)
+# ---------------------------------------------------------------------------
+SONAR_MODEL = env_str("SONAR_MODEL", "perplexity-fast")
+# web | academic | sec  — Perplexity search index to use
+SONAR_SEARCH_MODE = env_str("SONAR_SEARCH_MODE", "web")
+# hour | day | week | month | year | "" (no filter)
+SONAR_SEARCH_RECENCY = env_str("SONAR_SEARCH_RECENCY", "")
+# Comma-separated domain allowlist, e.g. "github.com,wikipedia.org" — "" means no filter
+SONAR_SEARCH_DOMAIN_FILTER = env_list("SONAR_SEARCH_DOMAIN_FILTER", "")
+
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
 DATA_DIR = Path(env_str("DATA_DIR", "/data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = DATA_DIR / "perplexio.db"
@@ -61,28 +74,35 @@ BACKUP_DIR = DATA_DIR / "backups"
 MAX_UPLOAD_SIZE_MB = env_int("MAX_UPLOAD_SIZE_MB", 20)
 FILE_CONTEXT_FILE_COUNT = env_int("FILE_CONTEXT_FILE_COUNT", 3)
 MAX_FILE_CONTEXT_CHARS = env_int("MAX_FILE_CONTEXT_CHARS", 12000)
+
+# ---------------------------------------------------------------------------
+# Thread memory
+# ---------------------------------------------------------------------------
 THREAD_HISTORY_TURNS = env_int("THREAD_HISTORY_TURNS", 6)
 THREAD_SUMMARY_ENABLED = env_int("THREAD_SUMMARY_ENABLED", 1) == 1
 THREAD_SUMMARY_INTERVAL = env_int("THREAD_SUMMARY_INTERVAL", 3)
 THREAD_RECENT_TURNS = env_int("THREAD_RECENT_TURNS", 3)
 THREAD_SUMMARY_MAX_TOKENS = env_int("THREAD_SUMMARY_MAX_TOKENS", 300)
 
+# ---------------------------------------------------------------------------
+# Embeddings — still needed for file RAG
+# ---------------------------------------------------------------------------
 EMBEDDING_BASE_URL = env_str("EMBEDDING_BASE_URL", OPENAI_BASE_URL)
 EMBEDDING_API_KEY = env_str("EMBEDDING_API_KEY", OPENAI_API_KEY)
 EMBEDDING_MODEL = env_str("EMBEDDING_MODEL", "text-embedding-3-small")
 EMBEDDING_TIMEOUT_SECONDS = env_float("EMBEDDING_TIMEOUT_SECONDS", 60.0)
+
+# ---------------------------------------------------------------------------
+# File chunking & retrieval
+# ---------------------------------------------------------------------------
 FILE_CHUNK_SIZE_CHARS = env_int("FILE_CHUNK_SIZE_CHARS", 1200)
 FILE_CHUNK_OVERLAP_CHARS = env_int("FILE_CHUNK_OVERLAP_CHARS", 200)
 FILE_VECTOR_TOP_K = env_int("FILE_VECTOR_TOP_K", 10)
 FILE_VECTOR_CANDIDATE_LIMIT = env_int("FILE_VECTOR_CANDIDATE_LIMIT", 200)
-QUERY_REWRITE_COUNT = env_int("QUERY_REWRITE_COUNT", 3)
-WEB_FUSION_FETCH_PER_QUERY = env_int("WEB_FUSION_FETCH_PER_QUERY", 8)
-RERANK_BLEND_ALPHA = env_float("RERANK_BLEND_ALPHA", 0.75)
-RERANK_USE_CROSS_ENCODER = env_int("RERANK_USE_CROSS_ENCODER", 0) == 1
-CROSS_ENCODER_MODEL = env_str("CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
-CROSS_ENCODER_TOP_K = env_int("CROSS_ENCODER_TOP_K", 20)
-CITATION_ALIGN_MIN_SCORE = env_float("CITATION_ALIGN_MIN_SCORE", 0.22)
 
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
 AUTH_PASSWORD = env_str("AUTH_PASSWORD", "")
 AUTH_COOKIE_NAME = env_str("AUTH_COOKIE_NAME", "perplexio_session")
 AUTH_SESSION_MAX_AGE_SECONDS = env_int("AUTH_SESSION_MAX_AGE_SECONDS", 315360000)
@@ -92,33 +112,29 @@ AUTH_SESSION_SECRET = env_str(
 )
 AUTH_COOKIE_SECURE = env_int("AUTH_COOKIE_SECURE", 0) == 1
 
+# ---------------------------------------------------------------------------
+# OCR / Vision
+# ---------------------------------------------------------------------------
 OCR_ENABLED = env_int("OCR_ENABLED", 1) == 1
 OCR_LANGUAGE = env_str("OCR_LANGUAGE", "eng")
-# Vision LLM OCR: set OCR_VISION_ENABLED=1 to use the vision-capable LLM for image text
-# extraction (works for any language/font). Falls back to Tesseract when disabled or failed.
-# Set VISION_MODEL to a vision-capable model name (e.g. gpt-4o-mini, llava) if different
-# from the main OPENAI_MODEL.
 OCR_VISION_ENABLED = env_int("OCR_VISION_ENABLED", 0) == 1
 VISION_MODEL = env_str("VISION_MODEL", "")        # empty → inherits OPENAI_MODEL at runtime
 VISION_BASE_URL = env_str("VISION_BASE_URL", "")  # empty → inherits OPENAI_BASE_URL at runtime
 VISION_API_KEY = env_str("VISION_API_KEY", "")    # empty → inherits OPENAI_API_KEY at runtime
+
+# ---------------------------------------------------------------------------
+# Transcription
+# ---------------------------------------------------------------------------
 TRANSCRIPTION_ENABLED = env_int("TRANSCRIPTION_ENABLED", 1) == 1
 TRANSCRIPTION_ENGINE = env_str("TRANSCRIPTION_ENGINE", "auto")
 TRANSCRIPTION_MODEL = env_str("TRANSCRIPTION_MODEL", "base")
-# "auto" lets Whisper detect the spoken language automatically (supports 99 languages).
-# Override with a specific language code (e.g. "vi", "ru", "tr") to skip detection.
 TRANSCRIPTION_LANGUAGE = env_str("TRANSCRIPTION_LANGUAGE", "auto")
 WHISPER_CPP_BIN = env_str("WHISPER_CPP_BIN", "")
 WHISPER_CPP_MODEL = env_str("WHISPER_CPP_MODEL", "")
 
-SEARCH_MAX_HOPS = env_int("SEARCH_MAX_HOPS", 2)
-SEARCH_FOLLOWUP_QUERIES = env_int("SEARCH_FOLLOWUP_QUERIES", 2)
-SOURCE_QUALITY_MIN = env_float("SOURCE_QUALITY_MIN", 0.35)
-CONFIDENCE_ABSTAIN_THRESHOLD = env_float("CONFIDENCE_ABSTAIN_THRESHOLD", 0.42)
-TRUST_PREFERRED_DOMAINS = env_list("TRUST_PREFERRED_DOMAINS", "")
-TRUST_BLOCKED_DOMAINS = env_list("TRUST_BLOCKED_DOMAINS", "")
-SEARCH_DEFAULT_MODE = env_str("SEARCH_DEFAULT_MODE", "all").lower()
-
+# ---------------------------------------------------------------------------
+# Ops
+# ---------------------------------------------------------------------------
 BACKUP_RETENTION_COUNT = env_int("BACKUP_RETENTION_COUNT", 10)
 ASK_CACHE_TTL_SECONDS = env_int("ASK_CACHE_TTL_SECONDS", 300)
 ASK_CACHE_MAX_ITEMS = env_int("ASK_CACHE_MAX_ITEMS", 300)

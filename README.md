@@ -1,12 +1,12 @@
-# Perplexio (SearxNG + OpenAI-compatible)
+# Perplexio (Powered by Perplexity Sonar via Pollinations.ai)
 
 ![Perplexio Banner](media/perplexio_banner.png)
 
-A minimal Perplexity-like backend you can run for free with:
-- your own SearxNG instance for web search (self-hosted, no rate limits)
-- any OpenAI-compatible LLM endpoint (`OPENAI_BASE_URL`)
-- full runtime config via environment variables
-- persistent storage under `/data` for uploads + chat history
+A minimal Perplexity-like app powered by:
+- **Perplexity Sonar** via Pollinations.ai for web-grounded answers (no SearxNG needed)
+- Any OpenAI-compatible LLM endpoint (`OPENAI_BASE_URL`) for utility tasks (titles, summaries, OCR)
+- Full runtime config via environment variables
+- Persistent storage under `/data` for uploads + chat history
 
 ## 1. Local run with Docker Compose
 
@@ -31,21 +31,20 @@ Recommended production setup:
 
 ## 2. Minimal Env Vars (Recommended)
 
-You only need a small set of env vars to run the app.
-
 ```env
-# Required for LLM
-OPENAI_BASE_URL=https://gen.pollinations.ai/v1
-OPENAI_MODEL=qwen-safety
-OPENAI_API_KEY=your-api-key
+# Pollinations.ai API key — provides access to Perplexity Sonar for web search
+# Get your key at: https://enter.pollinations.ai
+OPENAI_BASE_URL=https://gen.pollinations.ai
+OPENAI_API_KEY=your-pollinations-key
+OPENAI_MODEL=openai          # used for titles, summaries, OCR (non-search tasks)
 
-# Required for web search (your own SearxNG instance)
-SEARXNG_BASE_URL=http://your-searxng-instance:8080
+# Perplexity Sonar model for search-grounded answers
+SONAR_MODEL=perplexity-fast  # or perplexity-reasoning for deeper research
 
-# Recommended for file vector search (uses same API key)
+# Recommended for file vector search
 EMBEDDING_BASE_URL=https://integrate.api.nvidia.com/v1
+EMBEDDING_API_KEY=your-nvidia-key
 EMBEDDING_MODEL=nvidia/nv-embedcode-7b-v1
-EMBEDDING_API_KEY=your-api-key
 
 # Vision LLM OCR — works for any language (Vietnamese, Russian, etc.)
 OCR_VISION_ENABLED=1
@@ -56,26 +55,7 @@ AUTH_PASSWORD=change_me
 DATA_DIR=/data
 ```
 
-### SearxNG Setup
-
-Deploy your own SearxNG instance for unlimited, rate-limit-free search:
-
-```bash
-docker run -d -p 8080:8080 searxng/searxng:latest
-```
-
-Then set `SEARXNG_BASE_URL` to your instance URL.
-
-### Public SearxNG Instances (Fallback)
-
-> **Warning:** Public instances rate-limit API requests. Self-hosted is recommended.
-
-| Instance | URL |
-|----------|-----|
-| Sapti.me | `https://search.sapti.me` |
-| Searx.be | `https://searx.be` |
-| Ononoki | `https://search.ononoki.org` |
-| Tiekoetter | `https://searx.tiekoetter.com` |
+> **No SearxNG required.** Web search is handled natively by Perplexity Sonar via the Pollinations.ai API.
 
 ### Embedding Setup
 
@@ -88,12 +68,9 @@ Embeddings power smart file search — uploaded files are chunked, vectorized, a
 
 ## 2.5 Advanced Env Vars (Optional)
 
-See `.env.example` for full tuning options:
-
 | Category | Variables |
 |----------|-----------|
-| **Search / retrieval** | `SEARXNG_RESULT_COUNT`, `SEARCH_DEFAULT_MODE`, `SEARCH_MAX_HOPS`, `SEARCH_FOLLOWUP_QUERIES` |
-| **Rerank / citations** | `RERANK_BLEND_ALPHA`, `RERANK_USE_CROSS_ENCODER`, `CROSS_ENCODER_MODEL`, `CITATION_ALIGN_MIN_SCORE`, `SOURCE_QUALITY_MIN`, `CONFIDENCE_ABSTAIN_THRESHOLD` |
+| **Sonar search** | `SONAR_MODEL`, `SONAR_SEARCH_MODE` (web/academic/sec), `SONAR_SEARCH_RECENCY` (hour/day/week/month/year), `SONAR_SEARCH_DOMAIN_FILTER` |
 | **File retrieval** | `FILE_CHUNK_SIZE_CHARS`, `FILE_CHUNK_OVERLAP_CHARS`, `FILE_VECTOR_TOP_K`, `FILE_CONTEXT_FILE_COUNT`, `MAX_FILE_CONTEXT_CHARS` |
 | **Thread memory** | `THREAD_HISTORY_TURNS`, `THREAD_SUMMARY_ENABLED`, `THREAD_SUMMARY_INTERVAL`, `THREAD_RECENT_TURNS`, `THREAD_SUMMARY_MAX_TOKENS` |
 | **OCR / Vision** | `OCR_ENABLED`, `OCR_LANGUAGE`, `OCR_VISION_ENABLED`, `VISION_MODEL`, `VISION_BASE_URL`, `VISION_API_KEY` |
@@ -103,6 +80,15 @@ See `.env.example` for full tuning options:
 | **LLM** | `LLM_MAX_TOKENS`, `OPENAI_TIMEOUT_SECONDS` |
 | **Retry** | `LLM_RETRY_MAX_ATTEMPTS`, `LLM_RETRY_BASE_DELAY`, `LLM_RETRY_BACKOFF_FACTOR` |
 | **Ops** | `BACKUP_RETENTION_COUNT`, `ASK_CACHE_TTL_SECONDS`, `ASK_CACHE_MAX_ITEMS` |
+
+### Sonar Search Options
+
+```env
+SONAR_MODEL=perplexity-fast       # perplexity-fast (default) or perplexity-reasoning
+SONAR_SEARCH_MODE=web             # web (default) | academic | sec
+SONAR_SEARCH_RECENCY=             # empty (default) | hour | day | week | month | year
+SONAR_SEARCH_DOMAIN_FILTER=       # e.g. "github.com,wikipedia.org" — empty = no filter
+```
 
 ### Thread Summary Compression
 
@@ -149,7 +135,7 @@ Server-Sent Events with:
 - `event: meta` (citations)
 - `event: token` (incremental text)
 - `event: done` (`chat_id`, `thread_id`)
-- `event: final` (aligned final answer, if adjusted)
+- `event: final` (reserved, not emitted in current version)
 - `event: error`
 
 ### Jobs
@@ -276,15 +262,15 @@ Text extraction into LLM context currently supports:
 - During ask, the app embeds the query, ranks file chunks by cosine similarity, and sends top chunks to the LLM as file context.
 - If embedding retrieval is unavailable, it falls back to plain file-context inclusion.
 
-## 6.5 Web Retrieval Upgrades
+## 6.5 Web Search via Perplexity Sonar
 
-- Query rewrite: app generates multiple search rewrites for broader coverage.
-- Multi-search fusion: combines results from multiple rewritten queries with URL dedupe + fusion scoring.
-- Iterative hops: optional follow-up query generation and second-hop retrieval.
-- Reranker: embedding rerank with optional cross-encoder reranker.
-- Citation alignment: final answer is post-processed to align claim-level citations.
-- Trust/confidence guardrails: source quality thresholding + confidence scoring + low-confidence uncertainty notice.
-- Advanced trust model includes: domain reputation heuristics, query-term relevance boost, recency boost, and domain diversity penalty.
+Web search is handled entirely by Perplexity Sonar — no SearxNG, no query rewriting, no RRF fusion pipeline needed:
+
+- **Auto mode** (default): Sonar's built-in classifier decides whether to search the web.
+- **Files mode**: web search disabled; answer comes from uploaded file context only.
+- **Research mode**: uses `perplexity-reasoning` for deeper, step-by-step web research.
+- Citations are returned natively by Sonar as a URL array and rendered as inline `[1]` links.
+- `SONAR_SEARCH_RECENCY` can filter results to recent content (e.g. `week` for news queries).
 
 ## 7. OCR / Transcription Pipeline
 
