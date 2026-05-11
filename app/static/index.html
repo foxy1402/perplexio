@@ -5,6 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#07090d" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Perplexio" />
@@ -320,6 +321,133 @@
     }
     .mode-chip:hover { background: var(--panel-2); color: var(--ink); }
     .mode-chip.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+    .mode-chip .chip-count {
+      display: inline-block;
+      background: rgba(0,0,0,0.25);
+      color: inherit;
+      border-radius: 10px;
+      padding: 0 6px;
+      margin-left: 4px;
+      font-size: 11px;
+      line-height: 16px;
+      min-width: 16px;
+    }
+    /* Per-answer mode badge */
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 2px 8px;
+      margin-left: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      vertical-align: middle;
+    }
+    .mode-badge svg { width: 11px; height: 11px; }
+    /* Sources block */
+    .sources-block {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .sources-block h4 {
+      margin: 0 0 8px 0;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      font-weight: 600;
+    }
+    .sources-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .source-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    .source-item:hover { background: var(--panel-2); color: var(--ink); }
+    .source-item .src-num {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--line);
+      color: var(--ink);
+      font-size: 10px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .source-item img.favicon {
+      width: 14px; height: 14px; flex-shrink: 0;
+      border-radius: 2px;
+      background: var(--bg);
+    }
+    .source-item .src-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+    .source-item .src-domain {
+      color: var(--muted);
+      font-size: 11px;
+      margin-left: 6px;
+      flex-shrink: 0;
+    }
+    /* Stop button */
+    .stop-btn {
+      background: var(--panel-2);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 16px;
+      font-size: 13px;
+      cursor: pointer;
+      display: none;
+    }
+    .stop-btn:hover { background: #3f3f46; }
+    /* Sidebar history row with edit affordance */
+    .history li {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .history li button.thread-item {
+      flex: 1;
+      padding-right: 26px;
+    }
+    .history li .edit-thread {
+      position: absolute;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s;
+    }
+    .history li:hover .edit-thread { opacity: 1; }
+    .history li .edit-thread:hover { color: var(--ink); background: var(--panel-2); }
     /* Voice button */
     .voice-btn {
       background: transparent;
@@ -654,6 +782,7 @@
             <button class="mode-chip"        data-mode="research" onclick="setMode(this)" title="Deep research with Sonar Reasoning">Research</button>
           </div>
           <button id="askBtn" onclick="ask()" style="border-radius:8px;padding:6px 16px;font-size:13px;">Ask</button>
+          <button id="stopBtn" class="stop-btn" onclick="stopGenerating()" title="Stop generating">Stop</button>
         </div>
         <div id="status"></div>
       </section>
@@ -676,6 +805,7 @@
     let recognition   = null;
     let recognizing   = false;
     let _msgCounter   = 0;
+    let currentAbortController = null;
 
     /* ── PWA ── */
     if ("serviceWorker" in navigator) {
@@ -686,7 +816,14 @@
 
     /* ── settings toggle ── */
     function toggleSettings() {
-      document.getElementById("settingsMenu").classList.toggle("open");
+      const menu = document.getElementById("settingsMenu");
+      const opened = menu.classList.toggle("open");
+      if (opened) {
+        loadJobs();
+        loadBackups();
+      }
+      // Poll jobs only while the settings menu is open.
+      if (typeof ensureJobsPolling === "function") ensureJobsPolling(false);
     }
 
     /* ── voice input ── */
@@ -739,6 +876,48 @@
       document.querySelectorAll(".mode-chip").forEach(c => c.classList.remove("active"));
       const auto = document.querySelector(".mode-chip[data-mode='auto']");
       if (auto) auto.classList.add("active");
+    }
+    function updateModeChipCounts() {
+      const filesChip = document.querySelector(".mode-chip[data-mode='files']");
+      if (!filesChip) return;
+      const n = selectedFileIds.size;
+      const existing = filesChip.querySelector(".chip-count");
+      if (n > 0) {
+        if (existing) existing.textContent = String(n);
+        else {
+          const span = document.createElement("span");
+          span.className = "chip-count";
+          span.textContent = String(n);
+          filesChip.appendChild(span);
+        }
+      } else if (existing) {
+        existing.remove();
+      }
+    }
+    function statusForMode(mode, phase /* "start" | "stream" */) {
+      const m = mode || "auto";
+      if (phase === "start") {
+        if (m === "files")    return "Reading your files…";
+        if (m === "research") return "Researching with Sonar Reasoning…";
+        return "Asking Sonar…";
+      }
+      if (m === "files")    return "Generating answer from files…";
+      if (m === "research") return "Synthesizing research…";
+      return "Generating answer…";
+    }
+    function modeBadgeHtml(mode, searchedWeb) {
+      const m = (mode || "auto").toLowerCase();
+      const label = m === "files"    ? "Files"
+                  : m === "research" ? "Research"
+                                     : (searchedWeb ? "Auto · Web" : "Auto · Direct");
+      const icon  = m === "files"
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'
+        : m === "research"
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/></svg>'
+        : searchedWeb
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
+      return `<span class="mode-badge" title="${label}">${icon}${label}</span>`;
     }
 
     /* ── helpers ── */
@@ -905,6 +1084,78 @@
       }
     }
 
+    /* ── sources block under each answer ── */
+    function buildSourcesBlock(citations) {
+      if (!citations || !citations.length) return null;
+      const wrap = document.createElement("div");
+      wrap.className = "sources-block";
+      const heading = document.createElement("h4");
+      heading.textContent = `Sources (${citations.length})`;
+      wrap.appendChild(heading);
+      const list = document.createElement("div");
+      list.className = "sources-list";
+      citations.forEach((c, idx) => {
+        const url = c.url || "";
+        const isFile = url.startsWith("/api/files/");
+        const a = document.createElement("a");
+        a.className = "source-item";
+        a.id = `${'msg'}-src-${idx + 1}`; // overridden below to namespaced id
+        a.target = isFile ? "_self" : "_blank";
+        a.rel = "noopener noreferrer";
+        a.href = url || "#";
+
+        const num = document.createElement("span");
+        num.className = "src-num";
+        num.textContent = String(idx + 1);
+        a.appendChild(num);
+
+        let domain = "";
+        try { domain = new URL(url, window.location.origin).hostname.replace(/^www\./, ""); } catch {}
+        if (!isFile && domain) {
+          const ico = document.createElement("img");
+          ico.className = "favicon";
+          ico.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32`;
+          ico.alt = "";
+          ico.onerror = () => { ico.style.visibility = "hidden"; };
+          a.appendChild(ico);
+        }
+
+        const txt = document.createElement("span");
+        txt.className = "src-text";
+        txt.textContent = c.title || domain || url || "(source)";
+        a.appendChild(txt);
+
+        if (!isFile && domain && domain !== c.title) {
+          const dom = document.createElement("span");
+          dom.className = "src-domain";
+          dom.textContent = domain;
+          a.appendChild(dom);
+        }
+        list.appendChild(a);
+      });
+      wrap.appendChild(list);
+      return wrap;
+    }
+
+    function attachSources(msg, citations) {
+      const existing = msg.querySelector(".sources-block");
+      if (existing) existing.remove();
+      const block = buildSourcesBlock(citations);
+      if (!block) return;
+      // Rewrite anchor IDs to use the msg's namespaced id (matches citation chip links).
+      const items = block.querySelectorAll(".source-item");
+      items.forEach((el, idx) => { el.id = `${msg.id || "msg"}-src-${idx + 1}`; });
+      msg.appendChild(block);
+    }
+
+    function attachModeBadge(msg, mode, searchedWeb) {
+      const metaEl = msg.querySelector(".meta");
+      if (!metaEl) return;
+      // Strip any prior badge then append the new one.
+      metaEl.querySelectorAll(".mode-badge").forEach(b => b.remove());
+      metaEl.insertAdjacentHTML("beforeend", modeBadgeHtml(mode, searchedWeb));
+    }
+
     /* ── copy button ── */
     function addCopyButton(msg, rawText) {
       const existing = msg.querySelector(".copy-btn");
@@ -981,10 +1232,24 @@
       msg.appendChild(aEl);
       setAnswerContent(aEl, answer || "", citations || []);
       addCopyButton(msg, String(answer || ""));
+      attachSources(msg, citations || []);
 
       thread.appendChild(msg);
       thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
       return { msg, answerEl: aEl };
+    }
+
+    function stopGenerating() {
+      if (currentAbortController) {
+        try { currentAbortController.abort(); } catch {}
+      }
+    }
+
+    function setComposerBusy(busy) {
+      const askBtn = document.getElementById("askBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      if (askBtn)  askBtn.style.display = busy ? "none" : "";
+      if (stopBtn) stopBtn.style.display = busy ? "" : "none";
     }
 
     /* ── clear thread ── */
@@ -1003,15 +1268,19 @@
       const q    = qEl.value.trim();
       if (!q) return;
 
-      const askBtn = document.getElementById("askBtn");
-      if (askBtn) { askBtn.disabled = true; }
-
       const fileIds    = sortedSelectedFileIds();
       const searchMode = getSearchMode();
 
+      // Guard: Files mode requires at least one attached file
+      if (searchMode === "files" && fileIds.length === 0) {
+        setStatus("Files mode needs at least one attached file. Use Auto to ask without files.", true);
+        return;
+      }
+
+      setComposerBusy(true);
+
       if (activeThreadId === null) clearThreadEmpty();
 
-      // Build message article up-front
       const thread = document.getElementById("thread");
       const msg   = document.createElement("article");
       msg.className = "message";
@@ -1035,16 +1304,20 @@
       thread.appendChild(msg);
       thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
 
-      // Clear textarea immediately
       qEl.value = "";
       qEl.style.height = "56px";
 
-      setStatus("Searching the web…");
+      setStatus(statusForMode(searchMode, "start"));
 
-      let streamedText  = "";
-      let citationList  = [];
-      let gotDone       = false;
-      let rafPending    = false;
+      let streamedText   = "";
+      let citationList   = [];
+      let serverMode     = searchMode;
+      let searchedWeb    = false;
+      let gotDone        = false;
+      let rafPending     = false;
+      let metaInitDone   = false;
+
+      currentAbortController = new AbortController();
 
       try {
         const res = await apiFetch("/api/ask/stream", {
@@ -1056,7 +1329,8 @@
             thread_id: activeThreadId,
             file_ids: fileIds,
             search_mode: searchMode
-          })
+          }),
+          signal: currentAbortController.signal
         });
         if (!res.ok) throw new Error(await res.text());
 
@@ -1070,7 +1344,7 @@
 
           buf += decoder.decode(value, { stream: true });
           const parts = buf.split("\n\n");
-          buf = parts.pop(); // last may be incomplete
+          buf = parts.pop();
 
           for (const block of parts) {
             if (!block.trim()) continue;
@@ -1078,15 +1352,17 @@
             if (!ev) continue;
 
             if (ev.event === "meta") {
-              citationList = ev.payload.citations || [];
-              metaEl.textContent = new Date().toLocaleTimeString();
-              setStatus("Generating answer…");
-              // Clear placeholder cursor, ready for tokens
-              answerEl.innerHTML = '<span class="cursor-blink">▍</span>';
+              citationList = ev.payload.citations || citationList;
+              if (typeof ev.payload.mode === "string") serverMode = ev.payload.mode;
+              if (!metaInitDone) {
+                metaEl.textContent = new Date().toLocaleTimeString();
+                setStatus(statusForMode(serverMode, "stream"));
+                answerEl.innerHTML = '<span class="cursor-blink">▍</span>';
+                metaInitDone = true;
+              }
 
             } else if (ev.event === "token") {
               streamedText += ev.payload.delta || "";
-              // Batch DOM updates to animation frames for smooth rendering
               if (!rafPending) {
                 rafPending = true;
                 requestAnimationFrame(() => {
@@ -1101,23 +1377,20 @@
               gotDone = true;
               activeThreadId = ev.payload.thread_id;
               activeChatId   = ev.payload.chat_id;
+              citationList   = ev.payload.citations || citationList;
+              serverMode     = ev.payload.mode || serverMode;
+              searchedWeb    = !!ev.payload.searched_web;
 
-              // Final markdown render
               setAnswerContent(answerEl, streamedText, citationList);
               addCopyButton(msg, streamedText);
+              attachSources(msg, citationList);
+              attachModeBadge(msg, serverMode, searchedWeb);
               thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
 
               setFileSelectionStatus(`${selectedFileIds.size} file(s) attached to thread #${activeThreadId}`);
               setStatus(`Saved to thread #${activeThreadId} (chat #${activeChatId})`);
               await loadChats();
-              // Highlight active thread in sidebar
               highlightActiveThread(activeThreadId);
-
-            } else if (ev.event === "final") {
-              // Citation-aligned version arrived — re-render
-              const aligned = ev.payload.answer || "";
-              streamedText = aligned;
-              setAnswerContent(answerEl, aligned, citationList);
 
             } else if (ev.event === "error") {
               throw new Error(ev.payload.detail || "Stream error");
@@ -1126,17 +1399,32 @@
         }
 
         if (!gotDone && streamedText) {
-          // Stream ended without done event — render what we have
           setAnswerContent(answerEl, streamedText, citationList);
           addCopyButton(msg, streamedText);
+          attachSources(msg, citationList);
+          attachModeBadge(msg, serverMode, searchedWeb);
           setStatus("", false);
         }
 
       } catch (err) {
-        answerEl.innerHTML = `<span style="color:var(--error)">Error: ${err.message}</span>`;
-        setStatus("Request failed: " + err.message, true);
+        if (err && err.name === "AbortError") {
+          // User clicked Stop — finalize whatever we got.
+          if (streamedText) {
+            setAnswerContent(answerEl, streamedText, citationList);
+            addCopyButton(msg, streamedText);
+            attachSources(msg, citationList);
+            attachModeBadge(msg, serverMode, searchedWeb);
+          } else {
+            answerEl.innerHTML = '<span style="color:var(--muted)">Generation stopped.</span>';
+          }
+          setStatus("Stopped.", false);
+        } else {
+          answerEl.innerHTML = `<span style="color:var(--error)">Error: ${(err && err.message) || err}</span>`;
+          setStatus("Request failed: " + ((err && err.message) || err), true);
+        }
       } finally {
-        if (askBtn) { askBtn.disabled = false; }
+        currentAbortController = null;
+        setComposerBusy(false);
       }
     }
 
@@ -1222,17 +1510,50 @@
         chats.forEach(chat => {
           const li  = document.createElement("li");
           const btn = document.createElement("button");
+          btn.className = "thread-item";
           btn.dataset.threadId = chat.thread_id;
-          btn.textContent = truncate(chat.title || chat.query || "(empty)");
+          const title = chat.title || chat.query || "(empty)";
+          btn.textContent = truncate(title);
+          btn.title = title;
           if (chat.thread_id == activeThreadId) btn.classList.add("active-thread");
           btn.onclick = () => loadThread(chat.thread_id);
           li.appendChild(btn);
+
+          const edit = document.createElement("button");
+          edit.className = "edit-thread";
+          edit.title = "Rename thread";
+          edit.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+          edit.onclick = (ev) => {
+            ev.stopPropagation();
+            renameThread(chat.thread_id, title);
+          };
+          li.appendChild(edit);
+
           history.appendChild(li);
         });
       } catch (err) {
         const li = document.createElement("li");
         li.textContent = "Failed to load chats";
         history.appendChild(li);
+      }
+    }
+
+    async function renameThread(threadId, currentTitle) {
+      const next = window.prompt("Rename thread:", currentTitle || "");
+      if (next === null) return;
+      const trimmed = next.trim();
+      if (!trimmed) return;
+      try {
+        const res = await apiFetch(`/api/threads/${threadId}/title`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: trimmed })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await loadChats();
+        highlightActiveThread(activeThreadId);
+      } catch (err) {
+        setStatus("Rename failed: " + err.message, true);
       }
     }
 
@@ -1263,6 +1584,7 @@
         cb.onchange = () => {
           if (cb.checked) selectedFileIds.add(file.id);
           else            selectedFileIds.delete(file.id);
+          updateModeChipCounts();
           setFileSelectionStatus(
             activeThreadId === null
               ? `${selectedFileIds.size} file(s) selected for next new thread`
@@ -1276,6 +1598,7 @@
         li.appendChild(label);
         fileList.appendChild(li);
       });
+      updateModeChipCounts();
     }
 
     async function loadThread(threadId) {
@@ -1435,7 +1758,7 @@
       }
     }
 
-    /* ── keyboard shortcut ── */
+    /* ── keyboard shortcuts ── */
     const queryInput = document.getElementById("q");
     queryInput.addEventListener("input", function () {
       this.style.height = "auto";
@@ -1446,7 +1769,26 @@
       if (ev.key === "Enter" && !ev.shiftKey) {
         ev.preventDefault();
         const btn = document.getElementById("askBtn");
-        if (!btn || !btn.disabled) ask();
+        // Only ask when the Ask button is visible & enabled (not currently streaming).
+        if (btn && btn.style.display !== "none" && !btn.disabled) ask();
+      }
+      if (ev.key === "Escape" && currentAbortController) {
+        ev.preventDefault();
+        stopGenerating();
+      }
+    });
+
+    // Global shortcuts: Ctrl/⌘+K focuses input, Ctrl/⌘+N new chat
+    document.addEventListener("keydown", (ev) => {
+      const mod = ev.ctrlKey || ev.metaKey;
+      if (!mod) return;
+      if (ev.key === "k" || ev.key === "K") {
+        ev.preventDefault();
+        queryInput.focus();
+        queryInput.select();
+      } else if (ev.key === "/" ) {
+        ev.preventDefault();
+        queryInput.focus();
       }
     });
 
@@ -1454,14 +1796,22 @@
     async function initializeApp() {
       clearThread();
       resetComposer();
-      await loadChats();
-      await loadFiles();
-      await loadJobs();
-      await loadBackups();
-      setFileSelectionStatus("No thread selected. File choices apply to the next ask.");
       setupVoice();
-      if (jobsPollTimer === null) {
+      // Parallel kickoff — sidebar widgets are independent.
+      await Promise.allSettled([loadChats(), loadFiles(), loadJobs(), loadBackups()]);
+      setFileSelectionStatus("No thread selected. File choices apply to the next ask.");
+      // Job polling only runs while the settings menu is open (saves bandwidth).
+      ensureJobsPolling(false);
+    }
+
+    function ensureJobsPolling(active) {
+      const menuOpen = document.getElementById("settingsMenu").classList.contains("open");
+      const shouldRun = !!(active || menuOpen);
+      if (shouldRun && jobsPollTimer === null) {
         jobsPollTimer = setInterval(() => { loadJobs(); }, 5000);
+      } else if (!shouldRun && jobsPollTimer !== null) {
+        clearInterval(jobsPollTimer);
+        jobsPollTimer = null;
       }
     }
 

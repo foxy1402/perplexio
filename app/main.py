@@ -521,7 +521,10 @@ async def ask(payload: AskRequest, background_tasks: BackgroundTasks) -> AskResp
         search_mode=payload.search_mode,
     )
     answer, web_citations = await ask_model(messages, search_mode=effective_mode)
-    citations = file_citations + web_citations
+    # Order matters: Sonar's inline [N] markers are 1-indexed into its own
+    # citations list, so put web citations FIRST. File citations are appended
+    # afterwards and shown in the sources panel only.
+    citations = web_citations + file_citations
     chat_id, thread_id = save_chat(
         payload.query, answer, citations, thread_id=payload.thread_id
     )
@@ -560,9 +563,26 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
             cached_thread_id = int(cached.get("thread_id", 0))
 
             async def cached_stream():
-                yield f"event: meta\ndata: {json.dumps({'citations': cached_citations}, ensure_ascii=True)}\n\n".encode("utf-8")
+                cached_meta = {
+                    "mode": payload.search_mode,
+                    "citations": cached_citations,
+                    "cached": True,
+                }
+                yield f"event: meta\ndata: {json.dumps(cached_meta, ensure_ascii=True)}\n\n".encode("utf-8")
                 yield f"event: token\ndata: {json.dumps({'delta': cached_answer}, ensure_ascii=True)}\n\n".encode("utf-8")
-                yield f"event: done\ndata: {json.dumps({'chat_id': cached_chat_id, 'thread_id': cached_thread_id}, ensure_ascii=True)}\n\n".encode("utf-8")
+                cached_done = {
+                    "chat_id": cached_chat_id,
+                    "thread_id": cached_thread_id,
+                    "citations": cached_citations,
+                    "searched_web": any(
+                        isinstance(c, dict)
+                        and not str(c.get("url", "")).startswith("/api/files/")
+                        for c in cached_citations
+                    ),
+                    "mode": payload.search_mode,
+                    "cached": True,
+                }
+                yield f"event: done\ndata: {json.dumps(cached_done, ensure_ascii=True)}\n\n".encode("utf-8")
 
             return StreamingResponse(
                 cached_stream(),
@@ -583,9 +603,15 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
     async def event_stream() -> AsyncIterator[bytes]:
         all_text: list[str] = []
         web_citations: list = []
-        # Emit file citations immediately so the UI can render source cards.
-        meta = {"citations": [c.model_dump() for c in file_citations]}
-        yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=True)}\n\n".encode("utf-8")
+        # Initial meta tells the UI which mode is active and shows any file
+        # citations immediately. Web citations arrive after Sonar streams them.
+        initial_meta = {
+            "mode": effective_mode,
+            "model": "perplexity-reasoning" if effective_mode == "research" else None,
+            "citations": [c.model_dump() for c in file_citations],
+            "has_files": bool(file_citations),
+        }
+        yield f"event: meta\ndata: {json.dumps(initial_meta, ensure_ascii=True)}\n\n".encode("utf-8")
         try:
             async for token in ask_model_stream(messages, search_mode=effective_mode):
                 if isinstance(token, list):
@@ -599,10 +625,8 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
             if not answer:
                 raise RuntimeError("LLM returned empty stream content.")
 
-            all_citations = file_citations + web_citations
-            # Emit updated meta with all citations (web + file) after stream completes.
-            if web_citations:
-                yield f"event: meta\ndata: {json.dumps({'citations': [c.model_dump() for c in all_citations]}, ensure_ascii=True)}\n\n".encode("utf-8")
+            # Web first so Sonar's inline [N] markers index correctly.
+            all_citations = web_citations + file_citations
 
             chat_id, thread_id = save_chat(
                 payload.query, answer, all_citations, thread_id=payload.thread_id
@@ -620,7 +644,15 @@ async def ask_stream(payload: AskRequest) -> StreamingResponse:
                             "thread_id": thread_id,
                         },
                     )
-            done = {"chat_id": chat_id, "thread_id": thread_id}
+            # done event carries the final citation list + searched flag so the
+            # UI can render the source panel and a "searched the web" badge.
+            done = {
+                "chat_id": chat_id,
+                "thread_id": thread_id,
+                "citations": [c.model_dump() for c in all_citations],
+                "searched_web": bool(web_citations),
+                "mode": effective_mode,
+            }
             yield f"event: done\ndata: {json.dumps(done, ensure_ascii=True)}\n\n".encode("utf-8")
             asyncio.create_task(compress_thread_summary(thread_id))
             if is_new_thread:

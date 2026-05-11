@@ -260,21 +260,36 @@ def build_llm_messages(
     for turn in thread_history:
         messages.append({"role": "user", "content": turn["query"]})
         messages.append({"role": "assistant", "content": turn["answer"]})
-    source_label = "Uploaded file content" if files_only else "Context"
-    preamble = (
-        f"The following {source_label.lower()} is provided for reference. "
-        "Use it as your primary source, and supplement with your own knowledge where needed."
-        if files_only else
-        f"Use the {source_label.lower()} below to answer. If uncertain, say so."
-    )
     if context:
+        if files_only:
+            source_label = "Uploaded file content"
+            preamble = (
+                "The following uploaded file content is your primary source. "
+                "Use it whenever it is relevant, and supplement with your own knowledge "
+                "where the files are silent. Each chunk is numbered ([1], [2], ...) — "
+                "cite using those numbers."
+            )
+            cite_hint = (
+                "Return a concise answer. When you reference the uploaded files, "
+                "cite them inline like [1], [2] matching the chunk numbers above."
+            )
+        else:
+            source_label = "Background reference from your uploaded files"
+            preamble = (
+                "Background reference from the user's uploaded files is included below. "
+                "It is optional context — use it when it helps, otherwise rely on web search "
+                "and your own knowledge."
+            )
+            cite_hint = (
+                "Return a concise answer and cite web sources you used inline like [1], [2]."
+            )
         user_message = (
             f"{preamble}\n\n"
             f"{source_label}:\n"
             f"{context}\n\n"
             "Question:\n"
             f"{query}\n\n"
-            "Return a concise answer and cite sources like [1], [2]."
+            f"{cite_hint}"
         )
     else:
         user_message = f"Question:\n{query}"
@@ -357,19 +372,31 @@ def parse_sonar_citations(citations_urls: list[str]) -> list[Citation]:
     result: list[Citation] = []
     for url in citations_urls:
         try:
-            domain = urlparse(url).netloc.lstrip("www.")
+            domain = urlparse(url).netloc.removeprefix("www.")
         except Exception:
             domain = url[:40]
         result.append(Citation(title=domain or url[:40], url=url, snippet=""))
     return result
 
 
+def _model_for_mode(search_mode: str) -> str:
+    """Select Sonar model: 'research' uses Sonar Reasoning, everything else uses SONAR_MODEL."""
+    if search_mode == "research":
+        return "perplexity-reasoning"
+    return SONAR_MODEL
+
+
 def _sonar_extra_params(search_mode: str) -> dict:
     """Build Perplexity Sonar-specific params to merge into the request body.
 
-    search_mode "files" → disable_search=True (RAG-only, no web search).
-    All other modes → enable_search_classifier=True (Sonar decides automatically).
+    search_mode "files"    → disable_search=True (RAG-only, no web search; no other
+                              search filters because they would be ignored anyway).
+    search_mode "research" → force web search (no classifier — research always searches).
+    other modes ("auto")   → enable_search_classifier=True (Sonar decides automatically).
     """
+    if search_mode == "files":
+        return {"disable_search": True}
+
     params: dict = {}
     if SONAR_SEARCH_MODE:
         params["search_mode"] = SONAR_SEARCH_MODE
@@ -377,9 +404,8 @@ def _sonar_extra_params(search_mode: str) -> dict:
         params["search_recency_filter"] = SONAR_SEARCH_RECENCY
     if SONAR_SEARCH_DOMAIN_FILTER:
         params["search_domain_filter"] = list(SONAR_SEARCH_DOMAIN_FILTER)
-    if search_mode == "files":
-        params["disable_search"] = True
-    else:
+    # research → always search; auto → let Sonar's classifier decide.
+    if search_mode != "research":
         params["enable_search_classifier"] = True
     return params
 
@@ -391,7 +417,7 @@ async def ask_model(
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
     headers = _llm_headers()
     body = {
-        "model": SONAR_MODEL,
+        "model": _model_for_mode(search_mode),
         "messages": messages,
         "temperature": 0.2,
         "max_tokens": LLM_MAX_TOKENS,
@@ -518,7 +544,7 @@ async def ask_model_stream(
     endpoint = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
     headers = _llm_headers()
     body = {
-        "model": SONAR_MODEL,
+        "model": _model_for_mode(search_mode),
         "messages": messages,
         "temperature": 0.2,
         "max_tokens": LLM_MAX_TOKENS,
@@ -617,6 +643,7 @@ async def prepare_ask(
             history = get_thread_history(thread_id, THREAD_HISTORY_TURNS)
 
     has_files = bool(effective_file_ids)
+    files_only = (search_mode == "files" and has_files)
 
     # Retrieve file context when files are attached and the mode permits it.
     file_context = ""
@@ -638,14 +665,26 @@ async def prepare_ask(
             ),
         )
 
-    effective_mode = search_mode  # passed through to ask_model / ask_model_stream
+    # Reconcile file-chunk citation markers with how the frontend renders them.
+    # retrieve_file_context / build_file_context use "[F1] ..." labels to keep
+    # them visually distinct from web citations. We rewrite those labels so the
+    # final answer's [N] markers always index correctly:
+    #   files_only      → [F1] becomes [1] so Sonar can cite file refs as [1], [2]
+    #   auto/research   → [F1] is stripped; Sonar should cite only its web sources
+    if file_context:
+        if files_only:
+            file_context = re.sub(r"\[F(\d+)\]", r"[\1]", file_context)
+        else:
+            file_context = re.sub(r"\[F\d+\]\s*", "", file_context)
+
+    effective_mode = search_mode
 
     messages = build_llm_messages(
         query=query,
         context=file_context,
         thread_history=history,
         thread_summary=summary_text,
-        files_only=(search_mode == "files" and has_files),
+        files_only=files_only,
     )
     return messages, file_citations, effective_mode
 
